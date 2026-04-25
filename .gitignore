@@ -36,3 +36,10 @@ test-results/
 # pwa generated
 dev-dist/
 public/icons/*.png
+
+# vite temp files
+vite.config.ts.timestamp-*.mjs
+vitest.config.ts.timestamp-*.mjs
+
+# local Claude Code settings
+.claude/
