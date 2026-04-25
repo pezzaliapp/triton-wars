@@ -157,9 +157,9 @@ function runAiTurn(): void {
     return;
   }
   addPlayerMarker(outcome);
-  ai.notifyResult(target, outcome.result === 'already' ? 'miss' : outcome.result);
+  ai.notifyResult(target, outcome.result);
   // Cascades may be from a player mine — we can ignore for AI hunt heuristic
-  if (state.phase === 'over') {
+  if ((state.phase as string) === 'over') {
     hud.showGameOver(state.winner!);
     targeting.disable();
   }

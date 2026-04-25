@@ -28,9 +28,6 @@ export class RecruitAi {
   /** FIFO queue of cells to probe around recent hits. */
   private hunt: HuntCandidate[] = [];
 
-  /** Last hit, used to extend hunt along the same direction when chained. */
-  private lastHit: AiTarget | null = null;
-
   constructor(dims: GridDimensions, rng: () => number = Math.random) {
     this.dims = dims;
     this.rng = rng;
@@ -128,11 +125,9 @@ export class RecruitAi {
   notifyResult(shot: AiTarget, result: 'miss' | 'hit' | 'sunk'): void {
     if (result === 'sunk') {
       this.hunt = [];
-      this.lastHit = null;
       return;
     }
     if (result === 'hit') {
-      this.lastHit = shot;
       this.enqueueNeighbours(shot);
     }
   }
