@@ -12,8 +12,9 @@ import { showHowToPlay, hasSeenHowTo } from './ui/menu/how-to-play';
 import { showExitConfirm } from './ui/menu/exit-confirm';
 import { setMuted } from './game/audio/sfx';
 
-const canvas = document.querySelector<HTMLCanvasElement>('#scene');
-if (!canvas) throw new Error('canvas #scene not found');
+const canvasEl = document.querySelector<HTMLCanvasElement>('#scene');
+if (!canvasEl) throw new Error('canvas #scene not found');
+const canvas: HTMLCanvasElement = canvasEl;
 
 const sceneCtx = createScene(canvas);
 sceneCtx.scene.add(createVolumetricGrid(GRID_DIMENSIONS));
