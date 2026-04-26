@@ -1,16 +1,17 @@
 name: Deploy to GitHub Pages
 
-# This branch (`debug/iphone-ctx-loss-ab`) is kept alive for future
-# iPhone A/B bisects — DO NOT MERGE INTO main. The deploy trigger for
-# this branch was disabled after the first A/B run; re-add a
-# `- debug/iphone-ctx-loss-ab` line under `on.push.branches` only when
-# you need to publish this branch to /triton-wars/ again, and remove
-# it again right after. Production restore is `workflow_dispatch` on
-# main from the Actions UI.
+# WARNING: this branch (`debug/iphone-ctx-loss-ab`) currently has its
+# Pages deploy trigger ENABLED for an iPhone diagnostic round (the
+# `?hit-debug=1` probe). Pushing here replaces /triton-wars/ until
+# `workflow_dispatch` on main restores production. THIS BRANCH MUST
+# NEVER BE MERGED INTO main. Disable the trigger again after the run
+# by removing `- debug/iphone-ctx-loss-ab` from `on.push.branches`.
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - debug/iphone-ctx-loss-ab
   workflow_dispatch:
 
 permissions:

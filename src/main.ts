@@ -4,10 +4,7 @@ import { createScene } from './game/engine/scene';
 import { createOrbitControls } from './game/engine/controls';
 import { createVolumetricGrid, GRID_DIMENSIONS } from './game/grid/volumetric-grid';
 import { registerServiceWorker } from './pwa/sw-registration';
-import {
-  maybeShowWebViewBanner,
-  installContextLossHandlers,
-} from './pwa/webview-banner';
+import { maybeShowWebViewBanner } from './pwa/webview-banner';
 
 import { AppState, type Difficulty, isInMatch } from './app/app-state';
 import { MatchController } from './app/match-controller';
@@ -36,36 +33,67 @@ const sceneCtx = createScene(canvas);
 sceneCtx.scene.add(createVolumetricGrid(GRID_DIMENSIONS));
 const orbit = createOrbitControls(sceneCtx.camera, canvas);
 
-let renderingPaused = false;
 const tick = (): void => {
-  if (!renderingPaused) {
-    orbit.update();
-    sceneCtx.render();
-  }
+  orbit.update();
+  sceneCtx.render();
   requestAnimationFrame(tick);
 };
 requestAnimationFrame(tick);
 
-// Recover gracefully from a WebGL context loss (common in iOS WebViews
-// after a tab/app suspend). Without this the canvas freezes on a black
-// frame and never repaints — we pause the loop on lost, resume on
-// restored, and the renderer's internal state re-uploads on next draw.
-//
-// DEBUG A/B switch: ?nogl-guard=1 disables this listener so we can
-// bisect whether the iPhone-singleplayer freeze regression observed in
-// 3.1 is caused by it. Remove this gate (and the query string check)
-// once the cause is confirmed. See debug branch for context.
-if (new URLSearchParams(location.search).has('nogl-guard')) {
-  // skipped on purpose for the A/B test — leave canvas without our gate
-} else {
-  installContextLossHandlers(canvas, {
-    onLost: () => {
-      renderingPaused = true;
+// Diagnostic-only listeners. See main branch for the full rationale.
+// On this debug branch we additionally honour `?nogl-guard=1` to skip
+// even these (preserves the URL contract from the prior A/B run, so
+// past test links keep meaning the same thing). Default = listeners on.
+if (!new URLSearchParams(location.search).has('nogl-guard')) {
+  canvas.addEventListener(
+    'webglcontextlost',
+    () => console.warn('[gl] context lost'),
+    false,
+  );
+  canvas.addEventListener(
+    'webglcontextrestored',
+    () => console.warn('[gl] context restored'),
+    false,
+  );
+}
+
+// `?hit-debug=1` mounts a top-of-screen overlay that, on every
+// pointerdown anywhere in the document, captures the top-4 elements
+// at the touch point via document.elementsFromPoint(). Goal: identify
+// what is intercepting touches in placement (the "UI inert except
+// Esci" report on iPhone Safari, post-fix #5). The overlay is
+// pointer-events:none so it does not itself perturb hit-testing.
+// Listener is in capture phase so it sees events before any handler
+// has a chance to stopPropagation them.
+if (new URLSearchParams(location.search).has('hit-debug')) {
+  const dbg = document.createElement('div');
+  dbg.id = 'hit-debug';
+  dbg.style.cssText =
+    'position:fixed;top:env(safe-area-inset-top,0);left:0;right:0;' +
+    'background:rgba(180,0,0,0.92);color:#fff;font:11px/1.35 ui-monospace,Menlo,monospace;' +
+    'padding:6px 8px;z-index:99999;white-space:pre;pointer-events:none;' +
+    'max-height:140px;overflow:auto';
+  dbg.textContent = '[hit-debug] tap qualcosa…';
+  document.body.appendChild(dbg);
+  document.addEventListener(
+    'pointerdown',
+    (e: PointerEvent) => {
+      const els = document.elementsFromPoint(e.clientX, e.clientY).slice(0, 4);
+      const stack = els
+        .map((el) => {
+          const node = el as HTMLElement;
+          const cls =
+            node.className && typeof node.className === 'string'
+              ? node.className.split(/\s+/)[0]
+              : '';
+          return cls ? `${node.tagName}.${cls}` : node.tagName;
+        })
+        .join(' > ');
+      const line = `${e.clientX | 0},${e.clientY | 0} ${e.pointerType ?? '?'} → ${stack}`;
+      dbg.textContent = `${line}\n${(dbg.textContent ?? '').slice(0, 800)}`;
     },
-    onRestored: () => {
-      renderingPaused = false;
-    },
-  });
+    true,
+  );
 }
 
 // In-app WebView banner ("Apri in Safari") — sticky non-blocking, dismissable
