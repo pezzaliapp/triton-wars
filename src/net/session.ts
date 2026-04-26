@@ -289,6 +289,12 @@ export class OnlineSession {
         // Reconnect / liveness flows are handled in reconnect.ts; the
         // session itself ignores them (it only cares about game state).
         return;
+
+      case 'startMatch':
+      case 'standby':
+      case 'roomFull':
+        // Lobby-level flow — the orchestrator owns these.
+        return;
     }
   }
 

@@ -91,6 +91,13 @@ export interface ReceivedShotRecord {
   cascades: NetCascade[];
 }
 
+/** Why a third peer is being kicked out of a room.
+ *  - 'pending': host has not yet confirmed the current candidate; the
+ *    rejected peer can be told the host is evaluating someone else.
+ *  - 'locked':  host has already pressed "Inizia partita" — the match is
+ *    underway. */
+export type RoomFullStage = 'pending' | 'locked';
+
 export type NetMessage =
   | { t: 'hello'; protocolVersion: number; nick: string }
   | { t: 'ready' }
@@ -109,7 +116,15 @@ export type NetMessage =
   | { t: 'snapshotReq' }
   | { t: 'ping'; ts: number }
   | { t: 'pong'; ts: number }
-  | { t: 'forfeit' };
+  | { t: 'forfeit' }
+  /** Host signals to guest that the lobby is closed and placement begins.
+   *  Sent when the host presses "Inizia partita" in the invite flow. */
+  | { t: 'startMatch' }
+  /** Host puts the guest in stand-by while deciding. expiresAt is wall-clock
+   *  ms; on receipt the guest counts down and auto-disconnects on expiry. */
+  | { t: 'standby'; expiresAt: number }
+  /** Sent to a peer that we cannot accept because the room slot is taken. */
+  | { t: 'roomFull'; stage: RoomFullStage };
 
 export type NetMessageKind = NetMessage['t'];
 
@@ -127,6 +142,9 @@ const KINDS: ReadonlySet<NetMessageKind> = new Set([
   'ping',
   'pong',
   'forfeit',
+  'startMatch',
+  'standby',
+  'roomFull',
 ]);
 
 export function encode(msg: NetMessage): string {
