@@ -5,6 +5,7 @@ import { createOrbitControls } from './game/engine/controls';
 import { createVolumetricGrid, GRID_DIMENSIONS } from './game/grid/volumetric-grid';
 import { registerServiceWorker } from './pwa/sw-registration';
 import { maybeShowWebViewBanner } from './pwa/webview-banner';
+import { installOrientationLock } from './ui/orientation-lock';
 
 import { AppState, type Difficulty, isInMatch } from './app/app-state';
 import { MatchController } from './app/match-controller';
@@ -64,6 +65,11 @@ canvas.addEventListener(
 // In-app WebView banner ("Apri in Safari") — sticky non-blocking, dismissable
 // for 7 days via localStorage. No-op on desktop / standalone Safari.
 maybeShowWebViewBanner();
+
+// Force-landscape prompt on phones / small tablets in portrait. The HUD
+// layout doesn't fit a portrait viewport below 900px wide, so we cover
+// the screen with a rotation hint until the device is rotated.
+installOrientationLock();
 
 registerServiceWorker();
 
