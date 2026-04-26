@@ -87,6 +87,16 @@ let onlineState: GameState | null = null;
 let muted = false;
 
 function showMenu(): void {
+  // Destroy the old menu *synchronously* before starting teardownAll. The
+  // old code relied on teardownAll being effectively-sync (no awaits hit
+  // when nothing was pending), but PR #4 added `await teardownLobby()`,
+  // which always yields. The microtask resumed after showMenu had already
+  // created and appended the new menu — and teardownAll's tail
+  // `if (menu) menu.destroy()` then ripped that fresh menu out of the DOM.
+  if (menu) {
+    menu.destroy();
+    menu = null;
+  }
   void teardownAll();
   app.exitToMenu();
   menu = createMainMenu({
@@ -407,10 +417,10 @@ async function teardownAll(): Promise<void> {
     onlineState = null;
   }
   await teardownLobby();
-  if (menu) {
-    menu.destroy();
-    menu = null;
-  }
+  // NOTE: do NOT destroy `menu` here — its lifecycle is owned by showMenu,
+  // which destroys the previous menu synchronously before re-creating.
+  // Touching it from here introduces a microtask race that wipes the menu
+  // immediately after showMenu just appended it.
 }
 
 // Boot
