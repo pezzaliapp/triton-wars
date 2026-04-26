@@ -1,8 +1,18 @@
 name: Deploy to GitHub Pages
 
+# WARNING: this file lives on the debug branch `debug/iphone-ctx-loss-ab`
+# and temporarily triggers a Pages deploy from that branch (next on:
+# block) so an iPhone can hit the build for an A/B test of the
+# `installContextLossHandlers` listener. THIS BRANCH MUST NEVER BE
+# MERGED INTO main. After the test, restore prod by running
+# `workflow_dispatch` on main from the Actions UI (or CLI). The branch
+# is kept alive for further A/B bisects.
+
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - debug/iphone-ctx-loss-ab
   workflow_dispatch:
 
 permissions:
