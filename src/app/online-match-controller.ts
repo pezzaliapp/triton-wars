@@ -27,6 +27,10 @@ import {
   showDisconnectedBanner,
   type DisconnectedReason,
 } from '../ui/online/disconnected-banner';
+import {
+  showReconnectingBanner,
+  type ReconnectingBanner,
+} from '../ui/online/reconnecting-banner';
 import type { OnlineOrchestrator, OrchestratorEvent } from '../net/online-orchestrator';
 import type { VerificationOutcome } from '../net/commitment';
 import type { Side } from '../net/protocol';
@@ -69,6 +73,7 @@ export class OnlineMatchController {
   private startedPlaying = false;
   private gameOverFired = false;
   private revealTriggered = false;
+  private reconnectingBanner: ReconnectingBanner | null = null;
 
   constructor(private readonly opts: OnlineMatchOptions) {
     this.state = new GameState();
@@ -221,17 +226,28 @@ export class OnlineMatchController {
       case 'protocolError':
         this.onlineHud.setStatus('gone', `errore protocollo: ${e.reason}`);
         return;
+      case 'heartbeatMissed':
+        this.ensureReconnectingBanner().setProgress(e.missed, e.threshold);
+        return;
       case 'peerUnresponsive':
         this.onlineHud.setStatus('unresponsive', 'in attesa di risposta…');
         return;
       case 'peerResponsive':
         this.onlineHud.setStatus('connected');
+        if (this.reconnectingBanner) {
+          this.reconnectingBanner.flashRecovered();
+          this.reconnectingBanner = null;
+        }
         return;
       case 'peerLeft':
         this.onlineHud.setStatus('gone', 'connessione persa');
         return;
       case 'peerRejoined':
         this.onlineHud.setStatus('connected', 'riconnesso');
+        if (this.reconnectingBanner) {
+          this.reconnectingBanner.flashRecovered();
+          this.reconnectingBanner = null;
+        }
         return;
       case 'reconnectExpired':
         this.handlePeerLossOrForfeit('opponent-left-before-play');
@@ -293,6 +309,13 @@ export class OnlineMatchController {
     }
   }
 
+  private ensureReconnectingBanner(): ReconnectingBanner {
+    if (!this.reconnectingBanner) {
+      this.reconnectingBanner = showReconnectingBanner();
+    }
+    return this.reconnectingBanner;
+  }
+
   /**
    * Triple guard against the "phantom victory" bug: a peer that drops or
    * forfeits before the first shot must NOT trigger a game-over screen
@@ -345,6 +368,10 @@ export class OnlineMatchController {
   async destroy(): Promise<void> {
     if (this.destroyed) return;
     this.destroyed = true;
+    if (this.reconnectingBanner) {
+      this.reconnectingBanner.destroy();
+      this.reconnectingBanner = null;
+    }
     for (const unsub of this.unsubscribers) unsub();
     this.unsubscribers.length = 0;
     this.placement.destroy();

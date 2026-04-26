@@ -1008,3 +1008,69 @@ a:focus-visible {
   color: rgba(220, 235, 255, 0.6);
 }
 
+/* Reconnecting banner — top-center, high-contrast, sits above the HUD */
+.reconnecting-banner {
+  position: fixed;
+  top: max(env(safe-area-inset-top, 0px), 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 80;
+  pointer-events: none;
+  animation: reconnecting-banner-in 0.18s ease;
+}
+
+.reconnecting-banner-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: #fff5d8;
+  background: rgba(54, 28, 6, 0.92);
+  border: 1px solid rgba(255, 178, 71, 0.6);
+  box-shadow: 0 0 0 1px rgba(255, 178, 71, 0.2), 0 6px 22px rgba(0, 0, 0, 0.5);
+}
+
+.reconnecting-banner.is-critical .reconnecting-banner-inner {
+  color: #ffeaea;
+  background: rgba(64, 12, 12, 0.94);
+  border-color: rgba(255, 110, 110, 0.7);
+  box-shadow: 0 0 0 1px rgba(255, 110, 110, 0.25), 0 6px 22px rgba(0, 0, 0, 0.55);
+}
+
+.reconnecting-banner.is-recovered .reconnecting-banner-inner {
+  color: #e3ffe9;
+  background: rgba(10, 50, 25, 0.94);
+  border-color: rgba(126, 231, 135, 0.65);
+  box-shadow: 0 0 0 1px rgba(126, 231, 135, 0.22), 0 6px 22px rgba(0, 0, 0, 0.5);
+}
+
+.reconnecting-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ffb247;
+  box-shadow: 0 0 8px rgba(255, 178, 71, 0.7);
+  animation: reconnecting-banner-pulse 1.1s ease-in-out infinite;
+}
+.reconnecting-banner.is-critical .reconnecting-banner-dot {
+  background: #ff6e6e;
+  box-shadow: 0 0 8px rgba(255, 110, 110, 0.8);
+}
+.reconnecting-banner.is-recovered .reconnecting-banner-dot {
+  background: #7ee787;
+  box-shadow: 0 0 8px rgba(126, 231, 135, 0.7);
+  animation: none;
+}
+
+@keyframes reconnecting-banner-in {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes reconnecting-banner-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(0.8); }
+  50%      { opacity: 1;   transform: scale(1.05); }
+}
+

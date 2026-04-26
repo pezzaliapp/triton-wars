@@ -47,7 +47,11 @@ export type ReconnectEvent =
   | { kind: 'peerLeft' }
   | { kind: 'peerRejoined' }
   | { kind: 'reconnectExpired' }
-  | { kind: 'snapshotApplied'; from: 'self' | 'remote' };
+  | { kind: 'snapshotApplied'; from: 'self' | 'remote' }
+  /** Fired on each missed pong, *including* the one that crosses the
+   * threshold. UI can show "1/3 ... 2/3 ... 3/3" without needing to know
+   * the threshold from elsewhere. */
+  | { kind: 'heartbeatMissed'; missed: number; threshold: number };
 
 export type ReconnectListener = (e: ReconnectEvent) => void;
 
@@ -124,9 +128,12 @@ export class ReconnectController {
         this.send({ t: 'pong', ts: msg.ts });
         return;
       case 'pong':
-        this.missedPongs = 0;
-        if (!this.peerOnline) {
+        if (this.missedPongs > 0) {
+          this.missedPongs = 0;
           this.peerOnline = true;
+          // Emit peerResponsive on any recovery (not only after we declared
+          // unresponsive) so the UI can drop the heartbeat banner the
+          // moment a pong returns, even mid-counter.
           this.emit({ kind: 'peerResponsive' });
         }
         return;
@@ -188,6 +195,11 @@ export class ReconnectController {
       if (this.destroyed || !this.peerOnline) return;
       this.send({ t: 'ping', ts: this.now() });
       this.missedPongs += 1;
+      this.emit({
+        kind: 'heartbeatMissed',
+        missed: this.missedPongs,
+        threshold: this.missedPongThreshold,
+      });
       if (this.missedPongs === this.missedPongThreshold) {
         this.peerOnline = false;
         this.emit({ kind: 'peerUnresponsive' });
