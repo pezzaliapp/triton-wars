@@ -96,8 +96,10 @@ export async function createTrysteroTransport(
  * synchronously (microtask delivery to keep tests deterministic).
  */
 export function createLoopbackPair(): [Transport, Transport] {
-  const [a, b] = createLoopbackRoom(2, ['peer-a', 'peer-b']);
-  return [a, b];
+  const peers = createLoopbackRoom(2, ['peer-a', 'peer-b']);
+  // We just constructed two peers, so the indices are guaranteed —
+  // noUncheckedIndexedAccess types them as Transport | undefined otherwise.
+  return [peers[0]!, peers[1]!];
 }
 
 /**
