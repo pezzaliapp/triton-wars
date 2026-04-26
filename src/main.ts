@@ -24,7 +24,7 @@ import { showInviteDialog } from './ui/online/invite-dialog';
 import { showDisconnectedBanner } from './ui/online/disconnected-banner';
 import { OnlineOrchestrator } from './net/online-orchestrator';
 import { createTrysteroTransport } from './net/transport';
-import { readRoomFromUrl } from './ui/online/room-code';
+import { readRoomFromUrl, generateRoomCode } from './ui/online/room-code';
 import type { GameState } from './game/state/game-state';
 import type { Side } from './net/protocol';
 
@@ -176,7 +176,7 @@ const STANDBY_DURATION_MS = 60_000;
 async function connectAsHost(): Promise<void> {
   // Build the lobby screen first with a freshly generated code, then start
   // the transport using that same code. The screen owns the timer + share.
-  const code = (await import('./ui/online/room-code')).generateRoomCode();
+  const code = generateRoomCode();
   let orchestratorRef: OnlineOrchestrator | null = null;
   hostLobbyScreen?.destroy();
   hostLobbyScreen = showLobbyCreate({
