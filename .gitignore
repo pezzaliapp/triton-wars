@@ -32,6 +32,11 @@ pnpm-debug.log*
 coverage/
 playwright-report/
 test-results/
+scripts/screenshots-out/
+.playwright-browsers/
+
+# local debug bundle (screenshots, dumps)
+debug/
 
 # pwa generated
 dev-dist/

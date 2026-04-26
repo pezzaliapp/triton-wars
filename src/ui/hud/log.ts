@@ -6,11 +6,21 @@ export interface LogView {
   detach: () => void;
 }
 
+/**
+ * Action log presented as an `<details>` accordion. Closed by default
+ * to keep the bottom-sheet body visually quiet — the user opens it on
+ * demand. The list itself scrolls inside the accordion body.
+ */
 export function createLogView(log: ActionLog): LogView {
-  const el = document.createElement('div');
-  el.className = 'log';
+  const el = document.createElement('details');
+  el.className = 'log-accordion';
+  // closed by default: open when user taps. open attribute persists across
+  // state machine refresh because we never replace this element.
   el.innerHTML = `
-    <div class="log-header">Log</div>
+    <summary class="log-summary">
+      <span class="log-title">Log</span>
+      <span class="log-toggle" aria-hidden="true">▾</span>
+    </summary>
     <ul class="log-list" data-list></ul>
   `;
   const list = el.querySelector<HTMLUListElement>('[data-list]')!;

@@ -8,49 +8,64 @@ export interface UnitTrayOptions {
 }
 
 export interface UnitTray {
-  el: HTMLElement;
+  /** Always-visible row: current unit chip + Ruota + Conferma. Lives in
+   * the bottom-sheet's summary area (mobile) or at the top of the side
+   * panel (desktop). */
+  summaryEl: HTMLElement;
+  /** Fleet roster grid + placement progress. Lives in the bottom-sheet's
+   * body (mobile, visible mid/expanded) or below the summary on desktop. */
+  fleetEl: HTMLElement;
   update: () => void;
 }
 
 export function createUnitTray(state: GameState, opts: UnitTrayOptions): UnitTray {
-  const el = document.createElement('div');
-  el.className = 'unit-tray';
-  el.innerHTML = `
-    <div class="tray-header">
-      <span class="tray-title" data-title>Schieramento</span>
-      <span class="tray-progress" data-progress></span>
+  // ---- summary (always-visible row) --------------------------------------
+  const summaryEl = document.createElement('div');
+  summaryEl.className = 'tray-summary';
+  summaryEl.innerHTML = `
+    <div class="tray-summary-current" data-current></div>
+    <div class="tray-summary-actions">
+      <button type="button" class="btn btn-ghost btn-compact" data-rotate disabled>Ruota</button>
+      <button type="button" class="btn btn-primary btn-compact" data-confirm disabled>Conferma</button>
     </div>
-    <div class="tray-current" data-current></div>
-    <div class="tray-actions">
-      <button type="button" class="btn btn-ghost" data-rotate disabled>Ruota (R)</button>
-      <button type="button" class="btn btn-primary" data-confirm disabled>Conferma flotta</button>
-    </div>
-    <ul class="tray-fleet" data-fleet></ul>
   `;
-
-  const titleEl = el.querySelector<HTMLElement>('[data-title]')!;
-  const progressEl = el.querySelector<HTMLElement>('[data-progress]')!;
-  const currentEl = el.querySelector<HTMLElement>('[data-current]')!;
-  const rotateBtn = el.querySelector<HTMLButtonElement>('[data-rotate]')!;
-  const confirmBtn = el.querySelector<HTMLButtonElement>('[data-confirm]')!;
-  const fleetEl = el.querySelector<HTMLUListElement>('[data-fleet]')!;
+  const currentEl = summaryEl.querySelector<HTMLElement>('[data-current]')!;
+  const rotateBtn = summaryEl.querySelector<HTMLButtonElement>('[data-rotate]')!;
+  const confirmBtn = summaryEl.querySelector<HTMLButtonElement>('[data-confirm]')!;
 
   rotateBtn.addEventListener('click', () => opts.onRotate());
   confirmBtn.addEventListener('click', () => opts.onConfirm());
 
+  // ---- fleet (mid/expanded) ----------------------------------------------
+  const fleetEl = document.createElement('div');
+  fleetEl.className = 'tray-fleet-section';
+  fleetEl.innerHTML = `
+    <div class="tray-fleet-header">
+      <span class="tray-fleet-title" data-title>SCHIERAMENTO</span>
+      <span class="tray-fleet-progress" data-progress></span>
+    </div>
+    <ul class="tray-fleet" data-fleet></ul>
+  `;
+  const titleEl = fleetEl.querySelector<HTMLElement>('[data-title]')!;
+  const progressEl = fleetEl.querySelector<HTMLElement>('[data-progress]')!;
+  const fleetListEl = fleetEl.querySelector<HTMLUListElement>('[data-fleet]')!;
+
   const update = (): void => {
     if (state.phase !== 'placing') {
-      el.classList.add('tray-status');
-      titleEl.textContent = 'La tua flotta';
+      fleetEl.dataset.mode = 'status';
+      titleEl.textContent = 'LA TUA FLOTTA';
       progressEl.textContent = '';
-      currentEl.textContent = state.phase === 'playing' ? 'Resta in difesa.' : 'Match concluso.';
+      currentEl.innerHTML =
+        state.phase === 'playing'
+          ? '<span class="tray-summary-hint">Resta in difesa.</span>'
+          : '<span class="tray-summary-hint">Match concluso.</span>';
       rotateBtn.disabled = true;
       confirmBtn.disabled = true;
       renderFleetStatus();
       return;
     }
-    el.classList.remove('tray-status');
-    titleEl.textContent = 'Schieramento';
+    fleetEl.dataset.mode = 'placing';
+    titleEl.textContent = 'SCHIERAMENTO';
     const progress = state.placementProgress;
     progressEl.textContent = `${progress.placedCount} / ${progress.fleetSize}`;
     const next = state.nextUnitToPlace();
@@ -58,15 +73,15 @@ export function createUnitTray(state: GameState, opts: UnitTrayOptions): UnitTra
       const t = UNIT_TYPES[next];
       currentEl.innerHTML = `
         <span class="tray-chip" style="--chip:${'#' + t.color.toString(16).padStart(6, '0')}"></span>
-        <div>
-          <div class="tray-current-name">${t.label}</div>
-          <div class="tray-current-meta">${t.theatre} · ${t.length} cell${t.length === 1 ? 'a' : 'e'} · strato ${t.layer}</div>
+        <div class="tray-summary-meta">
+          <div class="tray-summary-name">${t.label}</div>
+          <div class="tray-summary-detail">${t.theatre} · ${t.length} cell${t.length === 1 ? 'a' : 'e'} · L${t.layer}</div>
         </div>
       `;
       rotateBtn.disabled = !t.rotatable;
       confirmBtn.disabled = true;
     } else {
-      currentEl.textContent = 'Tutto schierato. Conferma per iniziare.';
+      currentEl.innerHTML = '<span class="tray-summary-hint">Tutto schierato. Conferma per iniziare.</span>';
       rotateBtn.disabled = true;
       confirmBtn.disabled = false;
     }
@@ -75,8 +90,17 @@ export function createUnitTray(state: GameState, opts: UnitTrayOptions): UnitTra
 
   function renderFleetStatus(): void {
     const summary = fleetSummary(state.playerGrid);
-    fleetEl.innerHTML = '';
-    const order: UnitTypeId[] = ['portaerei', 'incrociatore', 'cacciatorpediniere', 'caccia', 'bombardiere', 'drone', 'sommergibile', 'mina'];
+    fleetListEl.innerHTML = '';
+    const order: UnitTypeId[] = [
+      'portaerei',
+      'incrociatore',
+      'cacciatorpediniere',
+      'caccia',
+      'bombardiere',
+      'drone',
+      'sommergibile',
+      'mina',
+    ];
     for (const id of order) {
       const stat = summary.get(id);
       if (!stat) continue;
@@ -88,10 +112,10 @@ export function createUnitTray(state: GameState, opts: UnitTrayOptions): UnitTra
         <span class="fleet-name">${t.label}</span>
         <span class="fleet-count">${stat.alive}/${stat.total}</span>
       `;
-      fleetEl.appendChild(li);
+      fleetListEl.appendChild(li);
     }
   }
 
   update();
-  return { el, update };
+  return { summaryEl, fleetEl, update };
 }

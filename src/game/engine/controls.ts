@@ -3,6 +3,9 @@ import { MathUtils, PerspectiveCamera, Spherical, Vector3 } from 'three';
 export interface OrbitControls {
   update: () => void;
   dispose: () => void;
+  /** Reset the camera distance from the target. Call this on window or
+   * visualViewport resize so the volume keeps filling the viewport. */
+  setRadius: (radius: number) => void;
 }
 
 interface OrbitOptions {
@@ -16,8 +19,8 @@ interface OrbitOptions {
 }
 
 const defaults: OrbitOptions = {
-  minDistance: 12,
-  maxDistance: 60,
+  minDistance: 16,
+  maxDistance: 90,
   minPolar: 0.18,
   maxPolar: Math.PI / 2 - 0.05,
   rotateSpeed: 0.0075,
@@ -43,8 +46,29 @@ export function createOrbitControls(
   const pointers = new Map<number, { x: number; y: number }>();
   let pinchStart = 0;
 
+  const safePreventDefault = (e: Event): void => {
+    if (e.cancelable) e.preventDefault();
+  };
+
+  const clearPointers = (): void => {
+    pointers.clear();
+    pinchStart = 0;
+  };
+
   const onPointerDown = (e: PointerEvent): void => {
-    domElement.setPointerCapture(e.pointerId);
+    safePreventDefault(e);
+    // Skip setPointerCapture for touch — iOS Safari leaks capture state
+    // when the finger leaves the canvas (lands on HUD overlays), which
+    // breaks subsequent input across the whole match. Mouse / pen still
+    // benefit from capture because their gesture model is reliable.
+    if (e.pointerType !== 'touch' && domElement.setPointerCapture) {
+      try {
+        domElement.setPointerCapture(e.pointerId);
+      } catch {
+        // Ignored — non-fatal on Safari/WebViews where capture occasionally
+        // throws InvalidStateError after a transient detachment.
+      }
+    }
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.size === 2) {
       pinchStart = pinchDistance();
@@ -54,6 +78,8 @@ export function createOrbitControls(
   const onPointerMove = (e: PointerEvent): void => {
     const prev = pointers.get(e.pointerId);
     if (!prev) return;
+    safePreventDefault(e);
+
     const dx = e.clientX - prev.x;
     const dy = e.clientY - prev.y;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -63,7 +89,7 @@ export function createOrbitControls(
       sphericalDelta.phi -= dy * opts.rotateSpeed;
     } else if (pointers.size === 2) {
       const distance = pinchDistance();
-      if (pinchStart > 0) {
+      if (pinchStart > 0 && distance > 0) {
         const ratio = pinchStart / distance;
         scale *= ratio;
       }
@@ -73,11 +99,14 @@ export function createOrbitControls(
 
   const onPointerUp = (e: PointerEvent): void => {
     pointers.delete(e.pointerId);
-    if (pointers.size < 2) {
-      pinchStart = 0;
-    }
-    if (domElement.hasPointerCapture(e.pointerId)) {
-      domElement.releasePointerCapture(e.pointerId);
+    if (pointers.size < 2) pinchStart = 0;
+
+    if (domElement.hasPointerCapture?.(e.pointerId)) {
+      try {
+        domElement.releasePointerCapture(e.pointerId);
+      } catch {
+        // Ignored — non-fatal on Safari/WebViews.
+      }
     }
   };
 
@@ -94,12 +123,20 @@ export function createOrbitControls(
     return Math.hypot(a.x - b.x, a.y - b.y);
   };
 
-  domElement.addEventListener('pointerdown', onPointerDown);
-  domElement.addEventListener('pointermove', onPointerMove);
+  domElement.addEventListener('pointerdown', onPointerDown, { passive: false });
+  domElement.addEventListener('pointermove', onPointerMove, { passive: false });
   domElement.addEventListener('pointerup', onPointerUp);
   domElement.addEventListener('pointercancel', onPointerUp);
+  domElement.addEventListener('lostpointercapture', clearPointers);
   domElement.addEventListener('wheel', onWheel, { passive: false });
   domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+  // Window-level fallbacks: when capture is skipped on touch the finger-up
+  // can land outside the canvas (e.g. on the bottom-sheet drawer). Without
+  // these the pointers map keeps stale entries and the next gesture fails.
+  window.addEventListener('pointerup', onPointerUp);
+  window.addEventListener('pointercancel', onPointerUp);
+  window.addEventListener('blur', clearPointers);
+  document.addEventListener('visibilitychange', clearPointers);
 
   const update = (): void => {
     spherical.theta += sphericalDelta.theta;
@@ -123,9 +160,24 @@ export function createOrbitControls(
     domElement.removeEventListener('pointermove', onPointerMove);
     domElement.removeEventListener('pointerup', onPointerUp);
     domElement.removeEventListener('pointercancel', onPointerUp);
+    domElement.removeEventListener('lostpointercapture', clearPointers);
     domElement.removeEventListener('wheel', onWheel);
+    window.removeEventListener('pointerup', onPointerUp);
+    window.removeEventListener('pointercancel', onPointerUp);
+    window.removeEventListener('blur', clearPointers);
+    document.removeEventListener('visibilitychange', clearPointers);
     pointers.clear();
   };
 
-  return { update, dispose };
+  const setRadius = (radius: number): void => {
+    spherical.radius = MathUtils.clamp(radius, opts.minDistance, opts.maxDistance);
+    // Reset any in-flight pinch zoom so the new value applies cleanly.
+    scale = 1;
+    // Re-place the camera immediately so the next render isn't a frame behind.
+    offset.setFromSpherical(spherical);
+    camera.position.copy(target).add(offset);
+    camera.lookAt(target);
+  };
+
+  return { update, dispose, setRadius };
 }
