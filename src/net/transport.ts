@@ -96,63 +96,122 @@ export async function createTrysteroTransport(
  * synchronously (microtask delivery to keep tests deterministic).
  */
 export function createLoopbackPair(): [Transport, Transport] {
-  const a = new LoopbackTransport('peer-a');
-  const b = new LoopbackTransport('peer-b');
-  a.connect(b);
-  b.connect(a);
-  return [a, b];
+  const peers = createLoopbackRoom(2, ['peer-a', 'peer-b']);
+  // We just constructed two peers, so the indices are guaranteed —
+  // noUncheckedIndexedAccess types them as Transport | undefined otherwise.
+  return [peers[0]!, peers[1]!];
+}
+
+/**
+ * In-memory N-peer room for hard-cap / multi-peer rejection tests. All
+ * peers see each other's join/leave/messages; targeted sends honour the
+ * peerId argument.
+ */
+export function createLoopbackRoom(
+  count: number,
+  ids?: string[],
+): Transport[] {
+  const peers: LoopbackTransport[] = [];
+  for (let i = 0; i < count; i++) {
+    const id = ids?.[i] ?? `peer-${String.fromCharCode(97 + i)}`;
+    peers.push(new LoopbackTransport(id));
+  }
+  for (const p of peers) {
+    for (const other of peers) {
+      if (other === p) continue;
+      p.linkPeer(other);
+    }
+  }
+  // Defer all peerJoin emissions to microtasks so listeners attached after
+  // construction still see them — matches createLoopbackPair semantics.
+  for (const p of peers) p.flushInitialJoins();
+  return peers;
 }
 
 class LoopbackTransport implements Transport {
   readonly selfId: string;
-  private peer: LoopbackTransport | null = null;
+  private readonly peers_ = new Map<string, LoopbackTransport>();
   private readonly listeners = new Set<TransportListener>();
   private destroyed = false;
+  private readonly pendingJoins: string[] = [];
+  /** Events that arrived before any listener subscribed are buffered here
+   * and replayed to the first listener — without this, late-attached
+   * orchestrators (e.g. a third peer constructed after the original pair
+   * has already paired) would silently miss the room state. */
+  private readonly pendingEvents: TransportEvent[] = [];
 
   constructor(id: string) {
     this.selfId = id;
   }
 
-  connect(other: LoopbackTransport): void {
-    this.peer = other;
+  /** Internal — register a sibling without emitting yet. */
+  linkPeer(other: LoopbackTransport): void {
+    this.peers_.set(other.selfId, other);
+    this.pendingJoins.push(other.selfId);
+  }
+
+  /** Internal — emit all queued peerJoin events on a microtask. */
+  flushInitialJoins(): void {
+    const queued = this.pendingJoins.splice(0);
     queueMicrotask(() => {
       if (this.destroyed) return;
-      this.emit({ kind: 'peerJoin', peerId: other.selfId });
+      for (const id of queued) this.emit({ kind: 'peerJoin', peerId: id });
     });
   }
 
   peers(): string[] {
-    return this.peer && !this.peer.destroyed ? [this.peer.selfId] : [];
+    return [...this.peers_.values()]
+      .filter((p) => !p.destroyed)
+      .map((p) => p.selfId);
   }
 
-  async send(msg: NetMessage, _peerId: string | null): Promise<void> {
+  async send(msg: NetMessage, peerId: string | null): Promise<void> {
     if (this.destroyed) return;
-    const peer = this.peer;
-    if (!peer || peer.destroyed) return;
+    const targets =
+      peerId === null
+        ? [...this.peers_.values()].filter((p) => !p.destroyed)
+        : [this.peers_.get(peerId)].filter(
+            (p): p is LoopbackTransport => !!p && !p.destroyed,
+          );
     const fromId = this.selfId;
-    queueMicrotask(() => {
-      if (peer.destroyed) return;
-      peer.emit({ kind: 'message', peerId: fromId, msg });
-    });
+    for (const target of targets) {
+      const peer = target;
+      queueMicrotask(() => {
+        if (peer.destroyed) return;
+        peer.emit({ kind: 'message', peerId: fromId, msg });
+      });
+    }
   }
 
   subscribe(l: TransportListener): () => void {
     this.listeners.add(l);
+    if (this.pendingEvents.length > 0) {
+      const drained = this.pendingEvents.splice(0);
+      queueMicrotask(() => {
+        for (const e of drained) l(e);
+      });
+    }
     return () => this.listeners.delete(l);
   }
 
   async destroy(): Promise<void> {
     if (this.destroyed) return;
     this.destroyed = true;
-    const peer = this.peer;
-    this.peer = null;
+    const peers = [...this.peers_.values()];
+    this.peers_.clear();
     this.listeners.clear();
-    if (peer && !peer.destroyed) {
-      queueMicrotask(() => peer.emit({ kind: 'peerLeave', peerId: this.selfId }));
+    for (const peer of peers) {
+      if (peer.destroyed) continue;
+      const id = this.selfId;
+      queueMicrotask(() => peer.emit({ kind: 'peerLeave', peerId: id }));
     }
   }
 
   private emit(e: TransportEvent): void {
+    if (this.listeners.size === 0) {
+      this.pendingEvents.push(e);
+      return;
+    }
     for (const l of this.listeners) l(e);
   }
 }

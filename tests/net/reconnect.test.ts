@@ -96,6 +96,31 @@ describe('ReconnectController heartbeat', () => {
     expect(eventsA.find((e) => e.kind === 'peerUnresponsive')).toBeDefined();
   });
 
+  it('emits heartbeatMissed with count + threshold on every missed pong', () => {
+    const clock = makeFakeClock();
+    const { reconnectA, eventsA } = makePair(clock);
+    reconnectA.onPeerJoin();
+    clock.advance(1000); // miss 1
+    clock.advance(1000); // miss 2
+    clock.advance(1000); // miss 3 → threshold
+    const misses = eventsA.filter((e) => e.kind === 'heartbeatMissed') as {
+      kind: 'heartbeatMissed'; missed: number; threshold: number;
+    }[];
+    expect(misses.map((m) => m.missed)).toEqual([1, 2, 3]);
+    expect(misses.every((m) => m.threshold === 3)).toBe(true);
+  });
+
+  it('emits peerResponsive on pong recovery before reaching threshold', () => {
+    const clock = makeFakeClock();
+    const { reconnectA, eventsA } = makePair(clock);
+    reconnectA.onPeerJoin();
+    clock.advance(1000); // miss 1
+    clock.advance(1000); // miss 2 (still below threshold of 3)
+    reconnectA.handleMessage({ t: 'pong', ts: 0 });
+    const responsives = eventsA.filter((e) => e.kind === 'peerResponsive');
+    expect(responsives.length).toBeGreaterThanOrEqual(1);
+  });
+
   it('resets missed counter on pong', () => {
     const clock = makeFakeClock();
     const { reconnectA, eventsA } = makePair(clock);

@@ -23,6 +23,14 @@ import { setMuted, unlockAudio } from '../game/audio/sfx';
 import { playForLogEntry } from '../game/audio/sfx-events';
 import { createOnlineHud, type OnlineHud } from '../ui/online/online-hud';
 import { showCheatBanner } from '../ui/online/cheat-banner';
+import {
+  showDisconnectedBanner,
+  type DisconnectedReason,
+} from '../ui/online/disconnected-banner';
+import {
+  showReconnectingBanner,
+  type ReconnectingBanner,
+} from '../ui/online/reconnecting-banner';
 import type { OnlineOrchestrator, OrchestratorEvent } from '../net/online-orchestrator';
 import type { VerificationOutcome } from '../net/commitment';
 import type { Side } from '../net/protocol';
@@ -65,6 +73,7 @@ export class OnlineMatchController {
   private startedPlaying = false;
   private gameOverFired = false;
   private revealTriggered = false;
+  private reconnectingBanner: ReconnectingBanner | null = null;
 
   constructor(private readonly opts: OnlineMatchOptions) {
     this.state = new GameState();
@@ -208,11 +217,7 @@ export class OnlineMatchController {
         return;
       }
       case 'opponentForfeit':
-        if (!this.gameOverFired) {
-          this.gameOverFired = true;
-          this.hud.showGameOver('human');
-          this.opts.onGameOver('human');
-        }
+        this.handlePeerLossOrForfeit('opponent-forfeited-before-play');
         return;
       case 'verificationComplete':
         this.opts.onVerification(e.outcome);
@@ -221,24 +226,49 @@ export class OnlineMatchController {
       case 'protocolError':
         this.onlineHud.setStatus('gone', `errore protocollo: ${e.reason}`);
         return;
+      case 'heartbeatMissed':
+        this.ensureReconnectingBanner().setProgress(e.missed, e.threshold);
+        return;
       case 'peerUnresponsive':
         this.onlineHud.setStatus('unresponsive', 'in attesa di risposta…');
         return;
       case 'peerResponsive':
         this.onlineHud.setStatus('connected');
+        if (this.reconnectingBanner) {
+          this.reconnectingBanner.flashRecovered();
+          this.reconnectingBanner = null;
+        }
         return;
       case 'peerLeft':
         this.onlineHud.setStatus('gone', 'connessione persa');
         return;
       case 'peerRejoined':
         this.onlineHud.setStatus('connected', 'riconnesso');
+        if (this.reconnectingBanner) {
+          this.reconnectingBanner.flashRecovered();
+          this.reconnectingBanner = null;
+        }
         return;
       case 'reconnectExpired':
+        this.handlePeerLossOrForfeit('opponent-left-before-play');
+        return;
+      case 'rejectedByPeer':
+        // We tried to talk but the partner had already locked someone else.
+        // Should not happen mid-match (we'd be the partner), but stay safe.
         if (!this.gameOverFired) {
           this.gameOverFired = true;
-          this.hud.showGameOver('human');
-          this.opts.onGameOver('human');
+          this.targeting.disable();
+          showDisconnectedBanner({
+            reason: e.stage === 'locked' ? 'rejected-room-full' : 'rejected-room-pending',
+            onReturnToMenu: () => this.opts.onReturnToMenu(),
+          });
         }
+        return;
+      case 'thirdPeerRejected':
+      case 'matchStarting':
+      case 'standby':
+        // Lobby-flow events — main.ts owns these before the match controller
+        // exists. If they arrive here it's a stale broadcast we can ignore.
         return;
       case 'snapshotApplied':
         // Nothing UI-visible — markers already correspond to recorded shots.
@@ -279,6 +309,48 @@ export class OnlineMatchController {
     }
   }
 
+  private ensureReconnectingBanner(): ReconnectingBanner {
+    if (!this.reconnectingBanner) {
+      this.reconnectingBanner = showReconnectingBanner();
+    }
+    return this.reconnectingBanner;
+  }
+
+  /**
+   * Triple guard against the "phantom victory" bug: a peer that drops or
+   * forfeits before the first shot must NOT trigger a game-over screen
+   * (the player did nothing — declaring them winner is misleading).
+   *
+   * Guards:
+   *   (a) session.phase must be 'playing' — i.e. both committed and placed
+   *   (b) at least one shot has been logged (sent or received) — proves
+   *       the playing phase actually advanced past turn 0
+   *
+   * If either guard fails we route to the DisconnectedBanner instead,
+   * which sends the user back to the menu cleanly.
+   */
+  private handlePeerLossOrForfeit(reason: DisconnectedReason): void {
+    if (this.gameOverFired) return;
+    const session = this.opts.orchestrator.session;
+    const inPlay = session.phase === 'playing';
+    const shotsLogged =
+      session.sentShotsView.length + session.receivedShotsView.length > 0;
+    if (inPlay && shotsLogged) {
+      this.gameOverFired = true;
+      this.targeting.disable();
+      this.hud.showGameOver('human');
+      this.opts.onGameOver('human');
+      return;
+    }
+    // Phantom — no real match took place. Banner + back to menu.
+    this.gameOverFired = true;
+    this.targeting.disable();
+    showDisconnectedBanner({
+      reason,
+      onReturnToMenu: () => this.opts.onReturnToMenu(),
+    });
+  }
+
   private maybeFireGameOver(): void {
     if (this.gameOverFired) return;
     if (this.state.phase !== 'over') return;
@@ -296,6 +368,10 @@ export class OnlineMatchController {
   async destroy(): Promise<void> {
     if (this.destroyed) return;
     this.destroyed = true;
+    if (this.reconnectingBanner) {
+      this.reconnectingBanner.destroy();
+      this.reconnectingBanner = null;
+    }
     for (const unsub of this.unsubscribers) unsub();
     this.unsubscribers.length = 0;
     this.placement.destroy();
