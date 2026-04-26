@@ -6,16 +6,11 @@
  * Facebook, Instagram, …). The renderer either fails to acquire a GL2
  * context or produces a black canvas after the first context loss.
  *
- * Mitigation has two parts:
- *  1. Detect known WebView UAs and show a sticky non-blocking banner
- *     telling the user to "Apri in Safari" — dismissable, with a 7-day
- *     localStorage flag so we don't nag.
- *  2. The render loop also installs `webglcontextlost`/`restored` handlers
- *     (see `installContextLossHandlers`) so transient losses don't leave
- *     the canvas frozen.
- *
- * Detection heuristics live here, banner DOM lives in this module too —
- * keeping both colocated makes it easy to tune one without spelunking.
+ * Mitigation: detect known WebView UAs and show a sticky non-blocking
+ * banner telling the user to "Apri in Safari" — dismissable, with a
+ * 7-day localStorage flag so we don't nag. Detection heuristics live
+ * here, banner DOM lives in this module too — keeping both colocated
+ * makes it easy to tune one without spelunking.
  */
 
 const STORAGE_KEY = 'triton-wars:webview-dismissed';
@@ -137,37 +132,4 @@ export function maybeShowWebViewBanner(): (() => void) | null {
   }
 
   return destroy;
-}
-
-/**
- * Installs `webglcontextlost` / `webglcontextrestored` handlers on the
- * canvas. Returns an unregister function.
- *
- * On loss: prevents the default (so the browser will fire `restored`)
- * and pauses the render loop via the `onLost` callback.
- * On restore: calls `onRestored` so the loop can resume and re-create
- * GPU resources if needed.
- */
-export interface ContextLossHandlers {
-  onLost: () => void;
-  onRestored: () => void;
-}
-
-export function installContextLossHandlers(
-  canvas: HTMLCanvasElement,
-  handlers: ContextLossHandlers,
-): () => void {
-  const onLost = (e: Event): void => {
-    e.preventDefault();
-    handlers.onLost();
-  };
-  const onRestored = (): void => {
-    handlers.onRestored();
-  };
-  canvas.addEventListener('webglcontextlost', onLost, false);
-  canvas.addEventListener('webglcontextrestored', onRestored, false);
-  return () => {
-    canvas.removeEventListener('webglcontextlost', onLost, false);
-    canvas.removeEventListener('webglcontextrestored', onRestored, false);
-  };
 }
