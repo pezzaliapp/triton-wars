@@ -24,12 +24,12 @@ export function showLobbyChooser(opts: LobbyChooserOptions): LobbyChooser {
       <p class="screen-sub">Connessione diretta tra browser. Nessun account, nessun server di gioco.</p>
       <div class="lobby-chooser-actions">
         <button type="button" class="btn btn-primary btn-lg" data-create>
-          <span>Crea partita</span>
-          <span class="lobby-chooser-hint">Genera un codice e condividilo</span>
+          <span>Invita un amico</span>
+          <span class="lobby-chooser-hint">Genera un link, lo mandi tu</span>
         </button>
         <button type="button" class="btn btn-ghost btn-lg" data-join>
-          <span>Unisciti</span>
-          <span class="lobby-chooser-hint">Inserisci il codice che ti hanno dato</span>
+          <span>Ho ricevuto un codice</span>
+          <span class="lobby-chooser-hint">Inserisci il codice ricevuto</span>
         </button>
       </div>
       <div class="screen-actions">

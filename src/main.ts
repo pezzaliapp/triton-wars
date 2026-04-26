@@ -17,9 +17,11 @@ import { showHowToPlay, hasSeenHowTo } from './ui/menu/how-to-play';
 import { showExitConfirm } from './ui/menu/exit-confirm';
 import { setMuted } from './game/audio/sfx';
 import { showLobbyChooser } from './ui/online/lobby-chooser';
-import { showLobbyCreate } from './ui/online/lobby-create';
+import { showLobbyCreate, type LobbyCreate } from './ui/online/lobby-create';
 import { showLobbyJoin } from './ui/online/lobby-join';
 import { showLobbyConnecting, type LobbyConnecting } from './ui/online/lobby-connecting';
+import { showInviteDialog } from './ui/online/invite-dialog';
+import { showDisconnectedBanner } from './ui/online/disconnected-banner';
 import { OnlineOrchestrator } from './net/online-orchestrator';
 import { createTrysteroTransport } from './net/transport';
 import { readRoomFromUrl } from './ui/online/room-code';
@@ -73,6 +75,11 @@ let menu: MainMenu | null = null;
 let match: MatchController | null = null;
 let onlineMatch: OnlineMatchController | null = null;
 let connectingScreen: LobbyConnecting | null = null;
+let hostLobbyScreen: LobbyCreate | null = null;
+/** When the lobby is alive but the match controller hasn't been built yet
+ * (still in lobby/awaiting-host-start phase), keep a tear-down hook here
+ * so showMenu/teardownAll can drop the orchestrator + transport cleanly. */
+let pendingLobbyTeardown: (() => Promise<void>) | null = null;
 /** Reference to the GameState owned by the active OnlineMatchController.
  * Captured here so the orchestrator's resolveAttack/getOwnUnits closures
  * (constructed *before* the match controller) can read the live state. */
@@ -131,10 +138,15 @@ function enterOnlineLobby(): void {
     menu = null;
   }
   app.enterLobby();
-  // Deep-link via ?room=... auto-routes to "join" with prefilled code.
+  // Deep-link via ?room=...: present an explicit invite dialog before
+  // connecting, so the guest knows what they are accepting.
   const fromUrl = readRoomFromUrl();
   if (fromUrl) {
-    void connectToRoom(fromUrl);
+    showInviteDialog({
+      roomCode: fromUrl,
+      onAccept: () => void connectAsGuest(fromUrl),
+      onCancel: () => showMenu(),
+    });
     return;
   }
   showLobbyChooser({
@@ -145,38 +157,64 @@ function enterOnlineLobby(): void {
 }
 
 function openCreateScreen(): void {
-  showLobbyCreate({
-    onStart: (code) => void connectToRoom(code, 'host'),
-    onCancel: () => showMenu(),
-  });
+  void connectAsHost();
 }
 
 function openJoinScreen(): void {
   showLobbyJoin({
-    onJoin: (code) => void connectToRoom(code, 'guest'),
+    onJoin: (code) => void connectAsGuest(code),
     onCancel: () => showMenu(),
   });
 }
 
-async function connectToRoom(roomCode: string, sideHint?: Side): Promise<void> {
-  // Show the connecting overlay immediately so the user sees feedback.
+/** Wall-clock ms a guest will wait for the host's startMatch/standby
+ * before giving up and showing a "host non ha confermato" banner. */
+const HOST_CONFIRM_TIMEOUT_MS = 30_000;
+/** Duration the host puts the guest in stand-by when pressing "Aspetta". */
+const STANDBY_DURATION_MS = 60_000;
+
+async function connectAsHost(): Promise<void> {
+  // Build the lobby screen first with a freshly generated code, then start
+  // the transport using that same code. The screen owns the timer + share.
+  const code = (await import('./ui/online/room-code')).generateRoomCode();
+  let orchestratorRef: OnlineOrchestrator | null = null;
+  hostLobbyScreen?.destroy();
+  hostLobbyScreen = showLobbyCreate({
+    initialCode: code,
+    onCancel: () => {
+      void teardownLobby();
+      showMenu();
+    },
+    onConfirmStart: () => orchestratorRef?.signalStartMatch(),
+    onWait: () => orchestratorRef?.signalStandby(STANDBY_DURATION_MS),
+  });
+  orchestratorRef = await openOrchestrator(code, 'host');
+}
+
+async function connectAsGuest(roomCode: string): Promise<void> {
   connectingScreen?.destroy();
   connectingScreen = showLobbyConnecting({
     roomCode,
-    onCancel: () => showMenu(),
+    onCancel: () => {
+      void teardownLobby();
+      showMenu();
+    },
   });
+  await openOrchestrator(roomCode, 'guest');
+}
 
-  // The 'host' vs 'guest' role only matters for tie-breaking display
-  // (Trystero peers are symmetric). If unspecified (deep link), default
-  // to 'guest' since deep links typically come from a host who shared.
-  const side: Side = sideHint ?? 'guest';
-
+/**
+ * Build the transport + orchestrator and wire it to the active lobby
+ * screen for this side. Returns the orchestrator (or null on transport
+ * failure — the lobby screen handles its own error state in that case).
+ */
+async function openOrchestrator(roomCode: string, side: Side): Promise<OnlineOrchestrator | null> {
   let transport: Awaited<ReturnType<typeof createTrysteroTransport>>;
   try {
     transport = await createTrysteroTransport({ appId: APP_ID, roomId: roomCode });
   } catch (err) {
-    connectingScreen.setStatus('failed', err instanceof Error ? err.message : String(err));
-    return;
+    connectingScreen?.setStatus('failed', err instanceof Error ? err.message : String(err));
+    return null;
   }
 
   const orchestrator = new OnlineOrchestrator({
@@ -201,15 +239,53 @@ async function connectToRoom(roomCode: string, sideHint?: Side): Promise<void> {
     getOwnUnits: () => (onlineState ? onlineState.serializePlayerFleet() : []),
   });
 
-  // Hand off to the OnlineMatchController as soon as the peer is found —
-  // we keep the connecting overlay visible until the orchestrator reaches
-  // the placing phase (both committed).
+  // Until handoff, the orchestrator + transport are owned by the lobby flow.
+  // Track them so cancel/teardown can release sockets cleanly.
   let handoffDone = false;
-  const handoff = (): void => {
-    if (handoffDone) return;
-    handoffDone = true;
+  let hostConfirmTimer: number | null = null;
+  let standbyExpireTimer: number | null = null;
+
+  const clearTimers = (): void => {
+    if (hostConfirmTimer !== null) {
+      window.clearTimeout(hostConfirmTimer);
+      hostConfirmTimer = null;
+    }
+    if (standbyExpireTimer !== null) {
+      window.clearTimeout(standbyExpireTimer);
+      standbyExpireTimer = null;
+    }
+  };
+
+  const teardown = async (): Promise<void> => {
+    clearTimers();
+    pendingLobbyTeardown = null;
+    if (!handoffDone) {
+      await orchestrator.destroy();
+    }
+  };
+  pendingLobbyTeardown = teardown;
+
+  const showRejection = (reason: 'rejected-room-full' | 'rejected-room-pending' | 'host-confirm-timeout' | 'standby-expired' | 'opponent-left-before-play'): void => {
+    void teardown();
     connectingScreen?.destroy();
     connectingScreen = null;
+    hostLobbyScreen?.destroy();
+    hostLobbyScreen = null;
+    showDisconnectedBanner({
+      reason,
+      onReturnToMenu: showMenu,
+    });
+  };
+
+  const handoffToMatch = (): void => {
+    if (handoffDone) return;
+    handoffDone = true;
+    clearTimers();
+    pendingLobbyTeardown = null;
+    connectingScreen?.destroy();
+    connectingScreen = null;
+    hostLobbyScreen?.destroy();
+    hostLobbyScreen = null;
     app.startOnlineMatch();
     setMuted(muted);
     onlineMatch = new OnlineMatchController({
@@ -233,24 +309,91 @@ async function connectToRoom(roomCode: string, sideHint?: Side): Promise<void> {
     onlineState = onlineMatch.state;
   };
 
-  const unsub = orchestrator.subscribe((e) => {
+  orchestrator.subscribe((e) => {
     if (handoffDone) return;
     switch (e.kind) {
       case 'opponentReady':
-        connectingScreen?.setStatus('peer-found');
-        // Once the opponent says hello, transition to placement —
-        // commit happens after the player confirms their fleet.
-        handoff();
-        unsub();
+        if (side === 'host') {
+          hostLobbyScreen?.showGuestPending(e.nick);
+        } else {
+          connectingScreen?.setStatus('waiting-host-start');
+          // Guest watchdog: if host doesn't press Inizia within 30s,
+          // surface "L'host non ha confermato" instead of waiting forever.
+          if (hostConfirmTimer === null) {
+            hostConfirmTimer = window.setTimeout(() => {
+              showRejection('host-confirm-timeout');
+            }, HOST_CONFIRM_TIMEOUT_MS);
+          }
+        }
         return;
+
+      case 'matchStarting':
+        // Host pressed Inizia (or guest received the signal). Both sides
+        // tear down the lobby chrome and switch to placement.
+        handoffToMatch();
+        return;
+
+      case 'standby':
+        // Guest only: host parked us in stand-by. Show countdown to
+        // expiresAt; on expiry surface a clear banner and disconnect.
+        if (side === 'guest') {
+          if (hostConfirmTimer !== null) {
+            window.clearTimeout(hostConfirmTimer);
+            hostConfirmTimer = null;
+          }
+          connectingScreen?.setStatus('standby');
+          connectingScreen?.setCountdown(e.expiresAt);
+          if (standbyExpireTimer !== null) window.clearTimeout(standbyExpireTimer);
+          const remainMs = Math.max(1000, e.expiresAt - Date.now());
+          standbyExpireTimer = window.setTimeout(() => {
+            showRejection('standby-expired');
+          }, remainMs);
+        }
+        return;
+
+      case 'rejectedByPeer':
+        showRejection(e.stage === 'locked' ? 'rejected-room-full' : 'rejected-room-pending');
+        return;
+
+      case 'thirdPeerRejected':
+        // Host just kicked a third peer — silent for now; UX is fine because
+        // the rejected peer sees their own banner. Could surface a toast
+        // later if telemetry shows it confuses hosts.
+        return;
+
       case 'transportError':
         connectingScreen?.setStatus('failed', e.error.message);
-        unsub();
         return;
+
+      case 'peerLeft':
+      case 'reconnectExpired':
+        // Lobby-phase peer drop: no match yet, no winner — just notify.
+        if (e.kind === 'reconnectExpired' && !handoffDone) {
+          showRejection('opponent-left-before-play');
+        }
+        return;
+
       default:
         return;
     }
   });
+
+  return orchestrator;
+}
+
+async function teardownLobby(): Promise<void> {
+  if (pendingLobbyTeardown) {
+    await pendingLobbyTeardown();
+    pendingLobbyTeardown = null;
+  }
+  if (hostLobbyScreen) {
+    hostLobbyScreen.destroy();
+    hostLobbyScreen = null;
+  }
+  if (connectingScreen) {
+    connectingScreen.destroy();
+    connectingScreen = null;
+  }
 }
 
 async function teardownAll(): Promise<void> {
@@ -263,10 +406,7 @@ async function teardownAll(): Promise<void> {
     onlineMatch = null;
     onlineState = null;
   }
-  if (connectingScreen) {
-    connectingScreen.destroy();
-    connectingScreen = null;
-  }
+  await teardownLobby();
   if (menu) {
     menu.destroy();
     menu = null;
