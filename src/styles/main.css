@@ -1074,3 +1074,69 @@ a:focus-visible {
   50%      { opacity: 1;   transform: scale(1.05); }
 }
 
+/* In-app WebView banner — bottom strip, sticky, dismissable */
+.webview-banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: env(safe-area-inset-bottom, 0px);
+  z-index: 200;
+  padding: 8px 10px;
+  background: rgba(7, 16, 32, 0.95);
+  border-top: 1px solid rgba(255, 178, 71, 0.45);
+  backdrop-filter: blur(10px);
+  animation: webview-banner-in 0.22s ease;
+}
+
+.webview-banner-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.webview-banner-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--hud-fg);
+}
+.webview-banner-text strong {
+  color: #ffb247;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.webview-banner-text span {
+  color: rgba(220, 235, 255, 0.7);
+}
+
+.webview-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.webview-banner-close {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.45);
+  color: var(--hud-fg);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+.webview-banner-close:hover {
+  border-color: var(--panel-border-strong);
+}
+
+@keyframes webview-banner-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+

@@ -4,6 +4,10 @@ import { createScene } from './game/engine/scene';
 import { createOrbitControls } from './game/engine/controls';
 import { createVolumetricGrid, GRID_DIMENSIONS } from './game/grid/volumetric-grid';
 import { registerServiceWorker } from './pwa/sw-registration';
+import {
+  maybeShowWebViewBanner,
+  installContextLossHandlers,
+} from './pwa/webview-banner';
 
 import { AppState, type Difficulty, isInMatch } from './app/app-state';
 import { MatchController } from './app/match-controller';
@@ -30,12 +34,32 @@ const sceneCtx = createScene(canvas);
 sceneCtx.scene.add(createVolumetricGrid(GRID_DIMENSIONS));
 const orbit = createOrbitControls(sceneCtx.camera, canvas);
 
+let renderingPaused = false;
 const tick = (): void => {
-  orbit.update();
-  sceneCtx.render();
+  if (!renderingPaused) {
+    orbit.update();
+    sceneCtx.render();
+  }
   requestAnimationFrame(tick);
 };
 requestAnimationFrame(tick);
+
+// Recover gracefully from a WebGL context loss (common in iOS WebViews
+// after a tab/app suspend). Without this the canvas freezes on a black
+// frame and never repaints — we pause the loop on lost, resume on
+// restored, and the renderer's internal state re-uploads on next draw.
+installContextLossHandlers(canvas, {
+  onLost: () => {
+    renderingPaused = true;
+  },
+  onRestored: () => {
+    renderingPaused = false;
+  },
+});
+
+// In-app WebView banner ("Apri in Safari") — sticky non-blocking, dismissable
+// for 7 days via localStorage. No-op on desktop / standalone Safari.
+maybeShowWebViewBanner();
 
 registerServiceWorker();
 
