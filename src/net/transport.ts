@@ -132,6 +132,11 @@ class LoopbackTransport implements Transport {
   private readonly listeners = new Set<TransportListener>();
   private destroyed = false;
   private readonly pendingJoins: string[] = [];
+  /** Events that arrived before any listener subscribed are buffered here
+   * and replayed to the first listener — without this, late-attached
+   * orchestrators (e.g. a third peer constructed after the original pair
+   * has already paired) would silently miss the room state. */
+  private readonly pendingEvents: TransportEvent[] = [];
 
   constructor(id: string) {
     this.selfId = id;
@@ -178,6 +183,12 @@ class LoopbackTransport implements Transport {
 
   subscribe(l: TransportListener): () => void {
     this.listeners.add(l);
+    if (this.pendingEvents.length > 0) {
+      const drained = this.pendingEvents.splice(0);
+      queueMicrotask(() => {
+        for (const e of drained) l(e);
+      });
+    }
     return () => this.listeners.delete(l);
   }
 
@@ -195,6 +206,10 @@ class LoopbackTransport implements Transport {
   }
 
   private emit(e: TransportEvent): void {
+    if (this.listeners.size === 0) {
+      this.pendingEvents.push(e);
+      return;
+    }
     for (const l of this.listeners) l(e);
   }
 }

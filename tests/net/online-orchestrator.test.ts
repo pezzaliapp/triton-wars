@@ -8,7 +8,7 @@
  *      end-of-game verification.
  */
 import { describe, expect, it } from 'vitest';
-import { createLoopbackPair, type Transport } from '../../src/net/transport';
+import { createLoopbackPair, createLoopbackRoom, type Transport } from '../../src/net/transport';
 import { OnlineOrchestrator, type OrchestratorEvent } from '../../src/net/online-orchestrator';
 import type { NetCell, NetMessage, SerializedUnit, Side } from '../../src/net/protocol';
 import { decode, encode } from '../../src/net/protocol';
@@ -370,6 +370,128 @@ describe('OnlineOrchestrator reconnect — snapshot mismatch resolution', () => 
 
     expect(a.session.phase).toBe(beforePhase);
     expect(a.session.turn).toBe(beforeTurn);
+  });
+});
+
+describe('OnlineOrchestrator hard-cap — third peer rejection', () => {
+  it('locks the partner slot on first hello and rejects a third peer with roomFull', async () => {
+    const [tA, tB, tC] = createLoopbackRoom(3, ['peer-a', 'peer-b', 'peer-c']);
+    const eventsA: OrchestratorEvent[] = [];
+    const eventsC: OrchestratorEvent[] = [];
+
+    // Build A and B first (the legitimate pair). They will exchange hello
+    // on the first peerJoin microtask and lock each other as partners.
+    const a = new OnlineOrchestrator({
+      transport: tA!,
+      side: 'host',
+      nick: 'A',
+      resolveAttack: () => ({ result: 'miss', cascades: [] }),
+      getOwnUnits: () => FLEET_A,
+    });
+    const b = new OnlineOrchestrator({
+      transport: tB!,
+      side: 'guest',
+      nick: 'B',
+      resolveAttack: () => ({ result: 'miss', cascades: [] }),
+      getOwnUnits: () => FLEET_B,
+    });
+    a.subscribe((e) => eventsA.push(e));
+    void b;
+
+    // Drain the loopback peerJoin + hello exchange before C subscribes —
+    // by the time C is built, A and B have already locked each other.
+    await flushMicrotasks();
+
+    const c = new OnlineOrchestrator({
+      transport: tC!,
+      side: 'guest',
+      nick: 'C',
+      resolveAttack: () => ({ result: 'miss', cascades: [] }),
+      getOwnUnits: () => FLEET_A,
+    });
+    c.subscribe((e) => eventsC.push(e));
+    await flushMicrotasks();
+
+    // C should receive a rejectedByPeer event with stage 'pending' (no one
+    // has called signalStartMatch yet, so the room isn't locked-in-progress).
+    const rejection = eventsC.find((e) => e.kind === 'rejectedByPeer');
+    expect(rejection).toBeDefined();
+    expect(
+      rejection &&
+        'stage' in rejection &&
+        (rejection as { stage: string }).stage,
+    ).toBe('pending');
+
+    // A should have emitted thirdPeerRejected for C's peerId at least once.
+    const kicked = eventsA.find(
+      (e) => e.kind === 'thirdPeerRejected' && (e as { peerId: string }).peerId === 'peer-c',
+    );
+    expect(kicked).toBeDefined();
+  });
+
+  it('uses stage=locked when the room has been locked via signalStartMatch', async () => {
+    const [tA, tB, tC] = createLoopbackRoom(3, ['peer-a', 'peer-b', 'peer-c']);
+    const a = new OnlineOrchestrator({
+      transport: tA!,
+      side: 'host',
+      nick: 'A',
+      resolveAttack: () => ({ result: 'miss', cascades: [] }),
+      getOwnUnits: () => FLEET_A,
+    });
+    const b = new OnlineOrchestrator({
+      transport: tB!,
+      side: 'guest',
+      nick: 'B',
+      resolveAttack: () => ({ result: 'miss', cascades: [] }),
+      getOwnUnits: () => FLEET_B,
+    });
+    void b;
+
+    await flushMicrotasks();
+    a.signalStartMatch();
+    await flushMicrotasks();
+
+    const eventsC: OrchestratorEvent[] = [];
+    const c = new OnlineOrchestrator({
+      transport: tC!,
+      side: 'guest',
+      nick: 'C',
+      resolveAttack: () => ({ result: 'miss', cascades: [] }),
+      getOwnUnits: () => FLEET_A,
+    });
+    c.subscribe((e) => eventsC.push(e));
+    await flushMicrotasks();
+
+    const rejection = eventsC.find((e) => e.kind === 'rejectedByPeer');
+    expect(rejection).toBeDefined();
+    expect(
+      rejection &&
+        'stage' in rejection &&
+        (rejection as { stage: string }).stage,
+    ).toBe('locked');
+  });
+});
+
+describe('OnlineOrchestrator invite flow — startMatch / standby signals', () => {
+  it('signalStartMatch emits matchStarting on both peers', async () => {
+    const peers = await makePair();
+    peers.a.signalStartMatch();
+    await peers.flush();
+    expect(peers.eventsA.find((e) => e.kind === 'matchStarting')).toBeDefined();
+    expect(peers.eventsB.find((e) => e.kind === 'matchStarting')).toBeDefined();
+  });
+
+  it('signalStandby surfaces a standby event on the receiver with the deadline', async () => {
+    const peers = await makePair();
+    const before = Date.now();
+    peers.a.signalStandby(15_000);
+    await peers.flush();
+    const ev = peers.eventsB.find((e) => e.kind === 'standby');
+    expect(ev).toBeDefined();
+    if (ev && 'expiresAt' in ev) {
+      expect(ev.expiresAt).toBeGreaterThanOrEqual(before);
+      expect(ev.expiresAt).toBeLessThanOrEqual(before + 30_000);
+    }
   });
 });
 
