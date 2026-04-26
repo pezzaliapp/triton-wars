@@ -4,6 +4,7 @@ import { difficultyLabel } from '../../app/app-state';
 export interface MainMenuOptions {
   initialDifficulty: Difficulty;
   onPlayVsComputer: (difficulty: Difficulty) => void;
+  onPlayOnline: () => void;
   onHowTo: () => void;
 }
 
@@ -122,13 +123,8 @@ export function createMainMenu(opts: MainMenuOptions): MainMenu {
   const onlineBtn = document.createElement('button');
   onlineBtn.type = 'button';
   onlineBtn.className = 'btn btn-ghost btn-lg';
-  onlineBtn.disabled = true;
-  onlineBtn.setAttribute('aria-disabled', 'true');
-  onlineBtn.title = 'Disponibile in Fase 3';
-  onlineBtn.innerHTML = `
-    <span>Gioca Online</span>
-    <span class="btn-badge">Fase 3</span>
-  `;
+  onlineBtn.innerHTML = '<span>Gioca Online</span>';
+  onlineBtn.addEventListener('click', () => opts.onPlayOnline());
 
   const howToBtn = document.createElement('button');
   howToBtn.type = 'button';

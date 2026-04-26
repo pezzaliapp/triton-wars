@@ -66,4 +66,25 @@ describe('AppState', () => {
     app.startMatch('recluta');
     expect(app.mode).toBe('placing');
   });
+
+  it('enterLobby flips matchKind to online and exits lobby on cancel', () => {
+    const app = new AppState();
+    app.enterLobby();
+    expect(app.mode).toBe('lobby');
+    expect(app.matchKind).toBe('online');
+    app.exitToMenu();
+    expect(app.mode).toBe('menu');
+    expect(app.matchKind).toBe('singleplayer');
+  });
+
+  it('startOnlineMatch transitions lobby → placing without losing matchKind', () => {
+    const app = new AppState();
+    app.enterLobby();
+    app.startOnlineMatch();
+    expect(app.mode).toBe('placing');
+    expect(app.matchKind).toBe('online');
+    app.beginPlay();
+    expect(app.mode).toBe('playing');
+    expect(app.matchKind).toBe('online');
+  });
 });
