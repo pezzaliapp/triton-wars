@@ -10,6 +10,7 @@ import { resolveAttack, type AttackOutcome } from '../rules/attack';
 
 export type Phase = 'placing' | 'playing' | 'over';
 export type Player = 'human' | 'ai';
+export type MatchMode = 'singleplayer' | 'online';
 
 export interface PlacementProgress {
   remainingFleet: UnitTypeId[];
@@ -26,6 +27,11 @@ export class GameState {
   private _phase: Phase = 'placing';
   private _turn: Player = 'human';
   private _winner: Player | null = null;
+  private _mode: MatchMode = 'singleplayer';
+  /** Online only: how many opponent units have been confirmed sunk via
+   * shotResult so far. We don't know the opponent's roster up front, so
+   * we compare against DEFAULT_FLEET.length to detect victory. */
+  private _opponentSunkCount = 0;
 
   private remainingFleet: UnitTypeId[] = [...DEFAULT_FLEET];
   private nextUnitId = 1;
@@ -42,6 +48,10 @@ export class GameState {
 
   get winner(): Player | null {
     return this._winner;
+  }
+
+  get mode(): MatchMode {
+    return this._mode;
   }
 
   get placementProgress(): PlacementProgress {
@@ -82,6 +92,15 @@ export class GameState {
     return unit;
   }
 
+  /** Snapshot of player's fleet for the online commit-reveal protocol. */
+  serializePlayerFleet(): Array<{ typeId: UnitTypeId; anchor: Cell; orientation: Orientation }> {
+    return this.playerGrid.units.map((u) => ({
+      typeId: u.typeId,
+      anchor: { ...u.anchor },
+      orientation: u.orientation,
+    }));
+  }
+
   /** Used by the AI auto-placer. Returns the placed unit or null on failure. */
   placeAiUnit(typeId: UnitTypeId, anchor: Cell, orientation: Orientation): UnitInstance | null {
     if (this._phase !== 'placing') return null;
@@ -99,6 +118,22 @@ export class GameState {
     this._phase = 'playing';
     this._turn = 'human';
     this.log.push({ kind: 'turn', player: 'human' });
+    this.emit();
+  }
+
+  /**
+   * Online variant of beginPlay. The opponent's grid is empty (and stays
+   * empty until reveal at end-of-game) so we skip the AI-grid-populated
+   * guard. Caller passes `firstTurn` based on the deterministic
+   * commitment XOR computed by the session layer.
+   */
+  beginPlayOnline(firstTurn: Player): void {
+    if (this._phase !== 'placing') return;
+    if (this.remainingFleet.length > 0) return;
+    this._mode = 'online';
+    this._phase = 'playing';
+    this._turn = firstTurn;
+    this.log.push({ kind: 'turn', player: firstTurn });
     this.emit();
   }
 
@@ -127,6 +162,90 @@ export class GameState {
     const outcome = resolveAttack(this.playerGrid, layer, x, z);
     if (outcome.result === 'already') return outcome;
 
+    this.recordOutcome('ai', outcome);
+    if (this.playerGrid.allUnitsSunk()) {
+      this._phase = 'over';
+      this._winner = 'ai';
+      this.log.push({ kind: 'game-over', winner: 'ai' });
+    } else {
+      this._turn = 'human';
+      this.log.push({ kind: 'turn', player: 'human' });
+    }
+    this.emit();
+    return outcome;
+  }
+
+  /**
+   * Online: record the opponent's reply to a shot we sent. Updates the
+   * fog grid (aiGrid.shots), tracks sunk count for win detection, flips
+   * turn. The opponent's units themselves are not materialised here —
+   * they only show up in the reveal at end-of-game.
+   */
+  applyOutgoingShotResult(
+    cell: { x: number; z: number; layer: number },
+    result: 'miss' | 'hit' | 'sunk',
+    cascades: ReadonlyArray<{
+      cell: { x: number; z: number; layer: number };
+      result: 'miss' | 'hit' | 'sunk';
+      sunkType?: UnitTypeId;
+    }> = [],
+    sunkType?: UnitTypeId,
+  ): void {
+    if (this._phase !== 'playing' || this._mode !== 'online') return;
+    if (this._turn !== 'human') return;
+
+    this.aiGrid.recordShot(cell.layer, cell.x, cell.z);
+    this.log.push({
+      kind: 'shot',
+      shooter: 'human',
+      x: cell.x,
+      z: cell.z,
+      layer: cell.layer,
+      result,
+      sunkType,
+    });
+    if (result === 'sunk') this._opponentSunkCount += 1;
+
+    if (cascades.length > 0) {
+      this.log.push({
+        kind: 'mine-explode',
+        shooter: 'human',
+        impacts: cascades.map((c) => ({
+          x: c.cell.x,
+          z: c.cell.z,
+          layer: c.cell.layer,
+          result: c.result,
+          sunkType: c.sunkType,
+        })),
+      });
+      for (const c of cascades) {
+        this.aiGrid.recordShot(c.cell.layer, c.cell.x, c.cell.z);
+        if (c.result === 'sunk') this._opponentSunkCount += 1;
+      }
+    }
+
+    if (this._opponentSunkCount >= DEFAULT_FLEET.length) {
+      this._phase = 'over';
+      this._winner = 'human';
+      this.log.push({ kind: 'game-over', winner: 'human' });
+    } else {
+      this._turn = 'ai';
+      this.log.push({ kind: 'turn', player: 'ai' });
+    }
+    this.emit();
+  }
+
+  /**
+   * Online: opponent has fired on us. Resolve against the local
+   * playerGrid using the standard rules and return the outcome so the
+   * orchestrator can echo it back as shotResult. Mirrors aiAttack but
+   * accepts the call regardless of `_turn` policing — the network
+   * already enforces ordering.
+   */
+  applyIncomingShot(layer: number, x: number, z: number): AttackOutcome | null {
+    if (this._phase !== 'playing' || this._mode !== 'online') return null;
+    const outcome = resolveAttack(this.playerGrid, layer, x, z);
+    if (outcome.result === 'already') return outcome;
     this.recordOutcome('ai', outcome);
     if (this.playerGrid.allUnitsSunk()) {
       this._phase = 'over';

@@ -1,0 +1,158 @@
+/**
+ * Abstract transport for Triton Wars online multiplayer.
+ *
+ * The whole netcode (protocol + session + orchestrator) is written
+ * against the Transport interface, never against Trystero directly.
+ * This keeps the orchestrator pure-TS testable: tests use an in-memory
+ * pair of LoopbackTransports, prod wires up TrysteroTransport.
+ *
+ * Trystero default strategy is Nostr — public relays, zero account,
+ * zero recurring cost. Game payload is end-to-end on a WebRTC data
+ * channel; the relay only carries WebRTC SDP for handshake.
+ */
+import type { NetMessage } from './protocol';
+import { encode, decode } from './protocol';
+
+export type TransportEvent =
+  | { kind: 'peerJoin'; peerId: string }
+  | { kind: 'peerLeave'; peerId: string }
+  | { kind: 'message'; peerId: string; msg: NetMessage }
+  | { kind: 'error'; error: Error };
+
+export type TransportListener = (e: TransportEvent) => void;
+
+export interface Transport {
+  /** Stable id of the local peer. */
+  readonly selfId: string;
+  /** Currently connected peer ids (excluding self). */
+  peers(): string[];
+  /** Send a message to one peer or to all peers if peerId is null. */
+  send(msg: NetMessage, peerId: string | null): Promise<void>;
+  /** Subscribe to transport events. Returns an unsubscribe handle. */
+  subscribe(l: TransportListener): () => void;
+  /** Tear down — leave the room, close sockets. */
+  destroy(): Promise<void>;
+}
+
+// ---- Trystero implementation --------------------------------------------
+
+export interface TrysteroTransportOptions {
+  /** Stable app id — namespaces our rooms apart from other Trystero apps. */
+  appId: string;
+  /** Lobby code — both peers must use the same to find each other. */
+  roomId: string;
+}
+
+export async function createTrysteroTransport(
+  opts: TrysteroTransportOptions,
+): Promise<Transport> {
+  // Dynamic import keeps trystero out of the singleplayer code path so
+  // the menu screen (and offline PWA boot) never pull the library.
+  const { joinRoom, selfId } = await import('trystero');
+  const room = joinRoom({ appId: opts.appId }, opts.roomId);
+
+  const [sendRaw, onRaw] = room.makeAction<string>('msg');
+  const listeners = new Set<TransportListener>();
+  const emit = (e: TransportEvent): void => {
+    for (const l of listeners) l(e);
+  };
+
+  room.onPeerJoin((peerId) => emit({ kind: 'peerJoin', peerId }));
+  room.onPeerLeave((peerId) => emit({ kind: 'peerLeave', peerId }));
+  onRaw((data, peerId) => {
+    try {
+      const msg = decode(data);
+      emit({ kind: 'message', peerId, msg });
+    } catch (err) {
+      emit({ kind: 'error', error: err instanceof Error ? err : new Error(String(err)) });
+    }
+  });
+
+  return {
+    selfId,
+    peers(): string[] {
+      return Object.keys(room.getPeers());
+    },
+    async send(msg: NetMessage, peerId: string | null): Promise<void> {
+      const payload = encode(msg);
+      await sendRaw(payload, peerId ?? undefined);
+    },
+    subscribe(l: TransportListener): () => void {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    async destroy(): Promise<void> {
+      listeners.clear();
+      await room.leave();
+    },
+  };
+}
+
+// ---- Loopback (testing) -------------------------------------------------
+
+/**
+ * In-memory transport pair for tests and local end-to-end runs.
+ * createLoopbackPair() returns two Transports wired to each other
+ * synchronously (microtask delivery to keep tests deterministic).
+ */
+export function createLoopbackPair(): [Transport, Transport] {
+  const a = new LoopbackTransport('peer-a');
+  const b = new LoopbackTransport('peer-b');
+  a.connect(b);
+  b.connect(a);
+  return [a, b];
+}
+
+class LoopbackTransport implements Transport {
+  readonly selfId: string;
+  private peer: LoopbackTransport | null = null;
+  private readonly listeners = new Set<TransportListener>();
+  private destroyed = false;
+
+  constructor(id: string) {
+    this.selfId = id;
+  }
+
+  connect(other: LoopbackTransport): void {
+    this.peer = other;
+    queueMicrotask(() => {
+      if (this.destroyed) return;
+      this.emit({ kind: 'peerJoin', peerId: other.selfId });
+    });
+  }
+
+  peers(): string[] {
+    return this.peer && !this.peer.destroyed ? [this.peer.selfId] : [];
+  }
+
+  async send(msg: NetMessage, _peerId: string | null): Promise<void> {
+    if (this.destroyed) return;
+    const peer = this.peer;
+    if (!peer || peer.destroyed) return;
+    const fromId = this.selfId;
+    queueMicrotask(() => {
+      if (peer.destroyed) return;
+      peer.emit({ kind: 'message', peerId: fromId, msg });
+    });
+  }
+
+  subscribe(l: TransportListener): () => void {
+    this.listeners.add(l);
+    return () => this.listeners.delete(l);
+  }
+
+  async destroy(): Promise<void> {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    const peer = this.peer;
+    this.peer = null;
+    this.listeners.clear();
+    if (peer && !peer.destroyed) {
+      queueMicrotask(() => peer.emit({ kind: 'peerLeave', peerId: this.selfId }));
+    }
+  }
+
+  private emit(e: TransportEvent): void {
+    for (const l of this.listeners) l(e);
+  }
+}

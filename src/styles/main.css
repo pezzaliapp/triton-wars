@@ -819,3 +819,192 @@ a:focus-visible {
     max-height: 100%;
   }
 }
+
+/* ---- Phase 3 — Online lobby + HUD ----------------------------------- */
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 11px;
+}
+
+.screen-lobby .screen-card {
+  text-align: center;
+}
+
+.lobby-code {
+  margin: 22px 0 12px;
+  padding: 14px 16px;
+  font-family: 'SF Mono', ui-monospace, Menlo, monospace;
+  font-size: 22px;
+  letter-spacing: 0.18em;
+  color: var(--hud-accent);
+  background: rgba(95, 212, 255, 0.06);
+  border: 1px solid rgba(95, 212, 255, 0.3);
+  border-radius: 12px;
+  user-select: all;
+}
+
+.lobby-link-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.lobby-link-input {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-family: 'SF Mono', ui-monospace, Menlo, monospace;
+  color: var(--hud-text);
+  background: rgba(11, 22, 41, 0.55);
+  border: 1px solid rgba(95, 212, 255, 0.25);
+  border-radius: 8px;
+  text-overflow: ellipsis;
+}
+
+.lobby-link-input:focus {
+  outline: none;
+  border-color: rgba(95, 212, 255, 0.6);
+}
+
+.lobby-helper {
+  margin: 12px 0 18px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(220, 235, 255, 0.55);
+}
+
+.lobby-code-input {
+  display: block;
+  width: 100%;
+  margin: 18px 0 8px;
+  padding: 14px 16px;
+  font-family: 'SF Mono', ui-monospace, Menlo, monospace;
+  font-size: 18px;
+  letter-spacing: 0.16em;
+  text-align: center;
+  text-transform: uppercase;
+  color: var(--hud-text);
+  background: rgba(11, 22, 41, 0.55);
+  border: 1px solid rgba(95, 212, 255, 0.3);
+  border-radius: 10px;
+}
+
+.lobby-code-input:focus {
+  outline: none;
+  border-color: rgba(95, 212, 255, 0.6);
+  box-shadow: 0 0 0 3px rgba(95, 212, 255, 0.12);
+}
+
+.lobby-error {
+  margin: 4px 0 14px;
+  font-size: 12px;
+  color: #ffb4b4;
+}
+
+.lobby-chooser-actions {
+  display: grid;
+  gap: 10px;
+  margin: 22px 0 18px;
+}
+
+.lobby-chooser-actions .btn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lobby-chooser-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: rgba(220, 235, 255, 0.55);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.lobby-spinner {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 22px 0 14px;
+  height: 14px;
+}
+
+.lobby-spinner-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(95, 212, 255, 0.55);
+  animation: lobby-spin 1.2s ease-in-out infinite;
+}
+
+.lobby-spinner-dot:nth-child(2) { animation-delay: 0.18s; }
+.lobby-spinner-dot:nth-child(3) { animation-delay: 0.36s; }
+
+.lobby-spinner-stopped .lobby-spinner-dot {
+  animation: none;
+  background: rgba(255, 100, 100, 0.5);
+}
+
+@keyframes lobby-spin {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40%           { transform: scale(1);    opacity: 1; }
+}
+
+.lobby-status {
+  margin: 6px 0 14px;
+  font-size: 13px;
+  color: var(--hud-text);
+}
+
+/* Online HUD overlay during a match */
+.online-hud {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 12px;
+  background: rgba(7, 16, 32, 0.85);
+  border: 1px solid rgba(95, 212, 255, 0.32);
+  border-radius: 999px;
+  backdrop-filter: blur(10px);
+  z-index: 30;
+  font-size: 12px;
+  color: var(--hud-text);
+}
+
+.online-hud-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.online-hud-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #5fd97a;
+  box-shadow: 0 0 6px rgba(95, 217, 122, 0.6);
+}
+
+.online-hud.is-unresponsive .online-hud-dot {
+  background: #f4d35e;
+  box-shadow: 0 0 6px rgba(244, 211, 94, 0.6);
+}
+
+.online-hud.is-gone .online-hud-dot {
+  background: #ff6b6b;
+  box-shadow: 0 0 6px rgba(255, 107, 107, 0.6);
+}
+
+.online-hud-nick {
+  font-weight: 600;
+}
+
+.online-hud-status {
+  color: rgba(220, 235, 255, 0.6);
+}
+

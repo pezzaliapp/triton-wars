@@ -9,16 +9,18 @@ Battaglia navale 3D, **PWA gratuita**, su tre teatri di guerra:
 - **Superficie** — portaerei, incrociatori, cacciatorpediniere
 - **Profondità** — sommergibili, mine, sonar
 
-Griglia volumetrica `10×10×6`, rendering WebGL2, multiplayer P2P (in arrivo nelle fasi successive).
+Griglia volumetrica `10×10×6`, rendering WebGL2, multiplayer P2P online via WebRTC.
 
 → Demo live: <https://pezzaliapp.github.io/triton-wars/>
 
 ## Stato
 
-**Fase 1 — Fondamenta.** In questo momento il progetto contiene la struttura,
-la scena 3D con la griglia volumetrica navigabile, lo scaffolding PWA e il
-deploy automatico su GitHub Pages. Il gameplay arriva nelle fasi successive
-(vedi [`prompt-claude-code.md`](./prompt-claude-code.md)).
+**Fase 3 — Multiplayer P2P.** Singleplayer vs IA giocabile (Phase 2),
+multiplayer 1v1 online via codice stanza condivisibile (Phase 3): trasporto
+WebRTC con signaling Nostr pubblico (zero account, zero backend), commit-reveal
+SHA-256 anti-cheat, riconnessione automatica entro 30s con risoluzione di
+snapshot mismatch. Il singleplayer resta installabile come PWA e funziona
+offline.
 
 ## Stack
 
@@ -28,7 +30,7 @@ deploy automatico su GitHub Pages. Il gameplay arriva nelle fasi successive
 | Linguaggio | TypeScript (strict) | gratis |
 | 3D engine | [Three.js](https://threejs.org/) r170 | gratis |
 | PWA | [`vite-plugin-pwa`](https://vite-pwa-org.netlify.app/) (Workbox) | gratis |
-| Multiplayer | [PeerJS](https://peerjs.com/) (broker pubblico) | gratis |
+| Multiplayer | [Trystero](https://github.com/dmotz/trystero) (WebRTC + Nostr signaling) | gratis |
 | Hosting | GitHub Pages | gratis |
 | CI/CD | GitHub Actions | gratis (tier pubblico) |
 
@@ -60,13 +62,37 @@ Le icone PWA vengono generate automaticamente prima di `dev` e `build` da
 |---|---|---|
 | GitHub Pages | hosting statico | qualsiasi static host (Netlify, Cloudflare Pages, S3) |
 | GitHub Actions | CI/CD | GitLab CI, Cloudflare Pages, deploy manuale |
-| PeerJS broker | segnalazione WebRTC (Fase 3) | Trystero (BitTorrent/Nostr/Firebase) |
+| Nostr relays (default Trystero) | segnalazione WebRTC | strategia MQTT/IPFS/Firebase di Trystero |
+
+## Multiplayer online
+
+Il bottone **Gioca Online** apre la lobby:
+
+- **Crea partita** genera un codice `TRITON-XXXX-XXXX` da condividere (con
+  link `?room=...` deep-link).
+- **Unisciti** apre l'input per chi riceve il codice.
+- I due browser si connettono direttamente via WebRTC; la signaling viaggia
+  su relay Nostr pubblici, il payload di gioco è end-to-end peer-to-peer.
+
+**Bundle.** Trystero è caricato via `import()` dinamico, quindi il
+first-paint del singleplayer non lo include: ~145 KB gzip in fase singola
+contro ~163 KB se l'utente entra in lobby online.
+
+**Anti-cheat.** Prima del primo tiro ogni client manda all'altro
+`SHA-256(flotta + nonce)`; a fine partita rivela `(flotta, nonce)` e l'altro
+verifica sia il commitment sia che ogni risposta `hit/miss/sunk` ricevuta sia
+coerente con la flotta rivelata. Se una qualunque dichiarazione non quadra,
+viene mostrato il banner "Partita non valida".
+
+**Riconnessione.** Heartbeat ogni 5s; se un peer scompare la partita resta in
+attesa fino a 30s. Al rientro i due client si scambiano uno snapshot dello
+stato e — in caso di divergenza — quello con il timestamp più alto vince.
 
 ## Roadmap
 
 - [x] Fase 1 — fondamenta: scena 3D, griglia, PWA shell, deploy
-- [ ] Fase 2 — gameplay singleplayer + IA base
-- [ ] Fase 3 — multiplayer P2P con codice stanza
+- [x] Fase 2 — gameplay singleplayer + IA base
+- [x] Fase 3 — multiplayer P2P con codice stanza
 - [ ] Fase 4 — rifinitura: tutorial, FFA, post-processing
 - [ ] Fase 5 — lancio: README con GIF, link da `alessandropezzali.it`
 
