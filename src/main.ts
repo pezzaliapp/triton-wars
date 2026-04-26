@@ -50,14 +50,23 @@ requestAnimationFrame(tick);
 // after a tab/app suspend). Without this the canvas freezes on a black
 // frame and never repaints — we pause the loop on lost, resume on
 // restored, and the renderer's internal state re-uploads on next draw.
-installContextLossHandlers(canvas, {
-  onLost: () => {
-    renderingPaused = true;
-  },
-  onRestored: () => {
-    renderingPaused = false;
-  },
-});
+//
+// DEBUG A/B switch: ?nogl-guard=1 disables this listener so we can
+// bisect whether the iPhone-singleplayer freeze regression observed in
+// 3.1 is caused by it. Remove this gate (and the query string check)
+// once the cause is confirmed. See debug branch for context.
+if (new URLSearchParams(location.search).has('nogl-guard')) {
+  // skipped on purpose for the A/B test — leave canvas without our gate
+} else {
+  installContextLossHandlers(canvas, {
+    onLost: () => {
+      renderingPaused = true;
+    },
+    onRestored: () => {
+      renderingPaused = false;
+    },
+  });
+}
 
 // In-app WebView banner ("Apri in Safari") — sticky non-blocking, dismissable
 // for 7 days via localStorage. No-op on desktop / standalone Safari.
