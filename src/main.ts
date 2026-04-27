@@ -1,11 +1,9 @@
 import './styles/main.css';
 
-import { createScene } from './game/engine/scene';
+import { createScene, computeCameraDistance } from './game/engine/scene';
 import { createOrbitControls } from './game/engine/controls';
 import { createVolumetricGrid, GRID_DIMENSIONS } from './game/grid/volumetric-grid';
 import { registerServiceWorker } from './pwa/sw-registration';
-import { maybeShowWebViewBanner } from './pwa/webview-banner';
-import { installOrientationLock } from './ui/orientation-lock';
 
 import { AppState, type Difficulty, isInMatch } from './app/app-state';
 import { MatchController } from './app/match-controller';
@@ -34,6 +32,18 @@ const sceneCtx = createScene(canvas);
 sceneCtx.scene.add(createVolumetricGrid(GRID_DIMENSIONS));
 const orbit = createOrbitControls(sceneCtx.camera, canvas);
 
+// Re-frame the volume on viewport resize (window + iOS Safari URL-bar
+// transitions). scene.ts owns the renderer/aspect side; orbit owns the
+// camera position, so we plug the desired distance into it directly.
+const updateCameraFraming = (): void => {
+  const vv = window.visualViewport;
+  const w = (vv?.width ?? window.innerWidth) || 1;
+  const h = (vv?.height ?? window.innerHeight) || 1;
+  orbit.setRadius(computeCameraDistance(w, h));
+};
+window.addEventListener('resize', updateCameraFraming);
+window.visualViewport?.addEventListener('resize', updateCameraFraming);
+
 const tick = (): void => {
   orbit.update();
   sceneCtx.render();
@@ -61,15 +71,6 @@ canvas.addEventListener(
   () => console.warn('[gl] context restored'),
   false,
 );
-
-// In-app WebView banner ("Apri in Safari") — sticky non-blocking, dismissable
-// for 7 days via localStorage. No-op on desktop / standalone Safari.
-maybeShowWebViewBanner();
-
-// Force-landscape prompt on phones / small tablets in portrait. The HUD
-// layout doesn't fit a portrait viewport below 900px wide, so we cover
-// the screen with a rotation hint until the device is rotated.
-installOrientationLock();
 
 registerServiceWorker();
 

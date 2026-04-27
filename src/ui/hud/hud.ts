@@ -6,6 +6,7 @@ import { createLayerPicker, type LayerPicker } from './layer-picker';
 import { createLegend } from './legend';
 import { createLayerToast, type LayerToast } from './layer-toast';
 import { createExitButton, type ExitButton } from './exit-button';
+import { createBottomSheet, type BottomSheet } from './bottom-sheet';
 
 export interface HudCallbacks {
   initialMuted?: boolean;
@@ -32,34 +33,32 @@ export interface Hud {
   destroy: () => void;
 }
 
+/**
+ * Mobile-first HUD layout.
+ *
+ * The HUD is a thin overlay over a full-bleed canvas. It never takes
+ * grid space — every chrome element is `position: fixed` with explicit
+ * `pointer-events: auto` so the rest of the screen passes touches
+ * straight through to the canvas.
+ *
+ * Top bar (~48px): Esci · dynamic title · audio. Always visible.
+ * Bottom-sheet (mobile) / side panel (desktop ≥1280px): the player's
+ * fleet panel — current unit + Ruota/Conferma always visible (collapsed
+ * area), fleet roster + collapsible legend & log in the body. Layer
+ * picker (only during playing) sits as a floating pill above the
+ * collapsed sheet, hidden when the sheet is mid/expanded.
+ */
 export function createHud(state: GameState, callbacks: HudCallbacks): Hud {
   const root = document.createElement('div');
-  root.className = 'hud-root';
+  root.className = 'hud-overlay';
 
-  const banner = createTurnBanner(state);
-  const tray = createUnitTray(state, {
-    onRotate: callbacks.onRotate,
-    onConfirm: callbacks.onConfirm,
-  });
-  const log = createLogView(state.log);
-
-  const layerToast = createLayerToast();
-  const layerPicker = createLayerPicker({
-    layers: state.dims.layers,
-    initial: 2,
-    onChange: (layer) => {
-      callbacks.onLayerChange(layer);
-      layerToast.show(layer);
-    },
-  });
-
-  const legend = createLegend();
+  // ---- top bar ------------------------------------------------------------
   const exitButton = createExitButton(() => callbacks.onExitRequest());
+  const banner = createTurnBanner(state);
 
-  // Audio button: 🔊 (on) / 🔇 (off)
   const audioBtn = document.createElement('button');
   audioBtn.type = 'button';
-  audioBtn.className = 'btn btn-icon';
+  audioBtn.className = 'btn btn-icon btn-audio';
   let muted = callbacks.initialMuted ?? false;
   const setAudioVisuals = (): void => {
     audioBtn.dataset.muted = String(muted);
@@ -74,37 +73,53 @@ export function createHud(state: GameState, callbacks: HudCallbacks): Hud {
     callbacks.onAudioToggle(muted);
   });
 
-  const topRow = document.createElement('div');
-  topRow.className = 'hud-top-row';
-  topRow.appendChild(exitButton.el);
-  topRow.appendChild(banner.el);
-  topRow.appendChild(audioBtn);
+  const topBar = document.createElement('header');
+  topBar.className = 'top-bar';
+  topBar.appendChild(exitButton.el);
+  topBar.appendChild(banner.el);
+  topBar.appendChild(audioBtn);
 
-  const sidePanel = document.createElement('aside');
-  sidePanel.className = 'hud-side';
-  sidePanel.appendChild(tray.el);
-  sidePanel.appendChild(legend.el);
-  sidePanel.appendChild(log.el);
+  // ---- panel content (used in both bottom-sheet and side-panel) ----------
+  const tray = createUnitTray(state, {
+    onRotate: callbacks.onRotate,
+    onConfirm: callbacks.onConfirm,
+  });
+  const legend = createLegend();
+  const log = createLogView(state.log);
 
-  const bottomBar = document.createElement('div');
-  bottomBar.className = 'hud-bottom-bar';
-  bottomBar.appendChild(layerPicker.el);
+  const panelBody = document.createElement('div');
+  panelBody.className = 'panel-body';
+  panelBody.appendChild(tray.fleetEl);
+  panelBody.appendChild(legend.el);
+  panelBody.appendChild(log.el);
 
-  root.appendChild(topRow);
-  root.appendChild(sidePanel);
-  root.appendChild(bottomBar);
+  const sheet: BottomSheet = createBottomSheet({
+    summary: tray.summaryEl,
+    body: panelBody,
+    initialState: pickInitialSheetState(),
+  });
+
+  // ---- layer picker + toast ----------------------------------------------
+  const layerToast = createLayerToast();
+  const layerPicker = createLayerPicker({
+    layers: state.dims.layers,
+    initial: 2,
+    onChange: (layer) => {
+      callbacks.onLayerChange(layer);
+      layerToast.show(layer);
+    },
+  });
+
+  root.appendChild(topBar);
+  root.appendChild(layerPicker.el);
+  root.appendChild(sheet.el);
   root.appendChild(layerToast.el);
 
   layerPicker.show(false);
   exitButton.show(false);
 
+  // ---- game-over overlay --------------------------------------------------
   let gameOverOverlay: HTMLDivElement | null = null;
-
-  const refresh = (): void => {
-    banner.update();
-    tray.update();
-  };
-
   const showGameOver = (winner: 'human' | 'ai'): void => {
     if (gameOverOverlay) return;
     const overlay = document.createElement('div');
@@ -129,12 +144,18 @@ export function createHud(state: GameState, callbacks: HudCallbacks): Hud {
     document.body.appendChild(overlay);
   };
 
+  const refresh = (): void => {
+    banner.update();
+    tray.update();
+  };
+
   const destroy = (): void => {
     log.detach();
     if (gameOverOverlay) {
       gameOverOverlay.remove();
       gameOverOverlay = null;
     }
+    sheet.destroy();
     root.remove();
   };
 
@@ -152,4 +173,20 @@ export function createHud(state: GameState, callbacks: HudCallbacks): Hud {
     showGameOver,
     destroy,
   };
+}
+
+/** Initial sheet state.
+ *
+ * On mobile we start collapsed so the layer-picker pill is visible above
+ * the sheet (the picker is hidden at mid/expanded by CSS to free up
+ * canvas room). The collapsed sheet still shows current unit + Ruota /
+ * Conferma; the player drags up if they want the fleet roster.
+ *
+ * On desktop the CSS pins the sheet as a side panel so the state doesn't
+ * really matter, but 'expanded' matches the visual at the media-query
+ * boundary. */
+function pickInitialSheetState(): 'collapsed' | 'mid' | 'expanded' {
+  if (typeof window === 'undefined') return 'collapsed';
+  const desktop = window.matchMedia('(min-width: 1280px)').matches;
+  return desktop ? 'expanded' : 'collapsed';
 }

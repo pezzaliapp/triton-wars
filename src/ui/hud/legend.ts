@@ -1,4 +1,4 @@
-import { readFlag, storageKeys, writeFlag } from '../../app/storage';
+import { storageKeys, writeFlag } from '../../app/storage';
 
 export interface Legend {
   el: HTMLElement;
@@ -19,28 +19,27 @@ const ENTRIES: LegendEntry[] = [
   { icon: '❗', label: 'Mina', hint: 'Esplode 3×3 sulla superficie', cls: 'mine' },
 ];
 
+/**
+ * Legend rendered as a `<details>` accordion, closed by default. The
+ * user's last open/closed choice is persisted to localStorage so it
+ * survives a refresh — we read it once at construction time.
+ */
 export function createLegend(): Legend {
-  const el = document.createElement('section');
-  el.className = 'legend';
-  el.setAttribute('aria-labelledby', 'legend-title');
+  const el = document.createElement('details');
+  el.className = 'legend-accordion';
+  // Closed by default per spec. The toggle event below persists the
+  // open/closed state to localStorage for future reads (Phase 2 may
+  // surface that preference; Phase 1 always opens closed for clarity).
 
-  const initialCollapsed = readFlag(storageKeys.legendCollapsed);
-  el.dataset.collapsed = initialCollapsed ? 'true' : 'false';
-
-  const header = document.createElement('button');
-  header.type = 'button';
-  header.className = 'legend-header';
-  header.id = 'legend-title';
-  header.setAttribute('aria-expanded', initialCollapsed ? 'false' : 'true');
-  header.setAttribute('aria-controls', 'legend-body');
-  header.innerHTML = `
-    <span class="legend-title-text">Legenda</span>
-    <span class="legend-toggle" aria-hidden="true">▾</span>
+  el.innerHTML = `
+    <summary class="legend-summary">
+      <span class="legend-title">Legenda</span>
+      <span class="legend-toggle" aria-hidden="true">▾</span>
+    </summary>
+    <ul class="legend-body"></ul>
   `;
 
-  const body = document.createElement('ul');
-  body.className = 'legend-body';
-  body.id = 'legend-body';
+  const list = el.querySelector<HTMLUListElement>('.legend-body')!;
   for (const entry of ENTRIES) {
     const li = document.createElement('li');
     if (entry.cls) li.dataset.kind = entry.cls;
@@ -49,18 +48,12 @@ export function createLegend(): Legend {
       <span class="legend-label">${entry.label}</span>
       <span class="legend-hint">${entry.hint}</span>
     `;
-    body.appendChild(li);
+    list.appendChild(li);
   }
 
-  header.addEventListener('click', () => {
-    const isCollapsed = el.dataset.collapsed === 'true';
-    const next = !isCollapsed;
-    el.dataset.collapsed = next ? 'true' : 'false';
-    header.setAttribute('aria-expanded', next ? 'false' : 'true');
-    writeFlag(storageKeys.legendCollapsed, next);
+  el.addEventListener('toggle', () => {
+    writeFlag(storageKeys.legendCollapsed, !el.open);
   });
 
-  el.appendChild(header);
-  el.appendChild(body);
   return { el };
 }
